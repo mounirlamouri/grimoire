@@ -1,15 +1,69 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { InstalledAddon } from "./types/addon";
+import type { InstalledAddon, AddonUpdate } from "./types/addon";
 
 type Tab = "installed" | "browse" | "settings";
 
+function ErrorOverlay({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  // Split into summary (first line / before colon chain) and details
+  const colonIdx = message.indexOf(": ");
+  const summary = colonIdx > 0 ? message.slice(0, colonIdx) : message;
+  const details = colonIdx > 0 ? message : null;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="mx-4 max-w-lg rounded-lg border border-[var(--accent)]/40 bg-[var(--bg-secondary)] p-5 shadow-xl">
+        <h3 className="mb-2 text-sm font-semibold text-[var(--accent)]">Error</h3>
+        <p className="mb-3 text-sm text-[var(--text-primary)]">{summary}</p>
+        {details && (
+          <>
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="mb-3 text-xs text-[var(--text-secondary)] underline transition hover:text-white"
+            >
+              {showDetails ? "Hide details" : "Show details"}
+            </button>
+            {showDetails && (
+              <pre className="mb-3 max-h-48 overflow-auto rounded border border-white/10 bg-[var(--bg-primary)] p-3 text-xs text-[var(--text-secondary)]">
+                {message}
+              </pre>
+            )}
+          </>
+        )}
+        <div>
+          <button
+            onClick={onClose}
+            className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("installed");
+  const [globalError, setGlobalError] = useState<string>("");
 
   return (
     <div className="flex h-screen flex-col">
+      {globalError && (
+        <ErrorOverlay
+          message={globalError}
+          onClose={() => setGlobalError("")}
+        />
+      )}
       <header className="flex items-center gap-4 border-b border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-6 py-3">
         <h1 className="text-xl font-bold tracking-wide text-[var(--accent)] drop-shadow-[0_0_8px_var(--teal)]">
           Grimoire
@@ -32,7 +86,7 @@ function App() {
       </header>
 
       <main className="flex-1 overflow-auto p-6">
-        {activeTab === "installed" && <InstalledPage />}
+        {activeTab === "installed" && <InstalledPage onError={setGlobalError} />}
         {activeTab === "browse" && <BrowsePage />}
         {activeTab === "settings" && <SettingsPage />}
       </main>
@@ -40,30 +94,45 @@ function App() {
   );
 }
 
-function InstalledPage() {
+function InstalledPage({ onError }: { onError: (msg: string) => void }) {
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
+  const [updates, setUpdates] = useState<AddonUpdate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>("");
+  const [checking, setChecking] = useState(false);
   const [filter, setFilter] = useState("");
   const [showLibraries, setShowLibraries] = useState(false);
 
   const loadAddons = () => {
     setLoading(true);
-    setError("");
     invoke<InstalledAddon[]>("get_installed_addons")
       .then((result) => {
         setAddons(result);
         setLoading(false);
       })
       .catch((err) => {
-        setError(String(err));
+        onError(String(err));
         setLoading(false);
+      });
+  };
+
+  const checkUpdates = () => {
+    setChecking(true);
+    invoke<AddonUpdate[]>("check_for_updates")
+      .then((result) => {
+        setUpdates(result);
+        setChecking(false);
+      })
+      .catch((err) => {
+        onError(`Update check failed: ${err}`);
+        setChecking(false);
       });
   };
 
   useEffect(() => {
     loadAddons();
   }, []);
+
+  const updateMap = new Map(updates.map((u) => [u.dir_name, u]));
 
   const filtered = addons.filter((addon) => {
     if (!showLibraries && addon.is_library) return false;
@@ -84,9 +153,14 @@ function InstalledPage() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold">Installed Addons</h2>
-          {!loading && !error && (
+          {!loading && (
             <span className="text-xs text-[var(--text-secondary)]">
               {addonCount} addons, {libCount} libraries
+              {updates.length > 0 && (
+                <span className="ml-1 text-[var(--accent)]">
+                  ({updates.length} update{updates.length !== 1 ? "s" : ""})
+                </span>
+              )}
             </span>
           )}
         </div>
@@ -97,18 +171,41 @@ function InstalledPage() {
           >
             Refresh
           </button>
-          <button className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110">
-            Update All
+          <button
+            onClick={checkUpdates}
+            disabled={checking || loading}
+            className="rounded border border-[var(--teal)]/30 px-3 py-1.5 text-sm text-[var(--teal)] transition hover:bg-[var(--teal)]/10 disabled:opacity-50"
+          >
+            {checking ? "Checking..." : "Check for Updates"}
           </button>
         </div>
       </div>
 
       {loading ? (
         <p className="text-[var(--text-secondary)]">Scanning addons...</p>
-      ) : error ? (
-        <p className="text-[var(--accent)]">{error}</p>
       ) : (
         <>
+          {updates.length > 0 && (
+            <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3">
+              <h3 className="mb-2 text-sm font-semibold text-[var(--accent)]">
+                Updates Available ({updates.length})
+              </h3>
+              <div className="space-y-1">
+                {updates.map((u) => (
+                  <div
+                    key={u.dir_name}
+                    className="flex items-center justify-between text-xs"
+                  >
+                    <span>{u.title}</span>
+                    <span className="text-[var(--text-secondary)]">
+                      {u.installed_version} → <span className="text-[var(--teal)]">{u.latest_version}</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="flex items-center gap-3">
             <input
               type="text"
@@ -137,7 +234,11 @@ function InstalledPage() {
           ) : (
             <div className="space-y-2">
               {filtered.map((addon) => (
-                <AddonCard key={addon.dir_name} addon={addon} />
+                <AddonCard
+                  key={addon.dir_name}
+                  addon={addon}
+                  update={updateMap.get(addon.dir_name)}
+                />
               ))}
             </div>
           )}
@@ -147,12 +248,22 @@ function InstalledPage() {
   );
 }
 
-function AddonCard({ addon }: { addon: InstalledAddon }) {
+function AddonCard({
+  addon,
+  update,
+}: {
+  addon: InstalledAddon;
+  update?: AddonUpdate;
+}) {
   const [expanded, setExpanded] = useState(false);
 
   return (
     <div
-      className="cursor-pointer rounded-lg border border-[var(--teal-dim)]/20 bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40"
+      className={`cursor-pointer rounded-lg border p-3 transition hover:border-[var(--teal-dim)]/40 ${
+        update
+          ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
+          : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
+      }`}
       onClick={() => setExpanded(!expanded)}
     >
       <div className="flex items-start justify-between">
@@ -164,10 +275,18 @@ function AddonCard({ addon }: { addon: InstalledAddon }) {
                 LIB
               </span>
             )}
+            {update && (
+              <span className="rounded bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
+                UPDATE
+              </span>
+            )}
           </div>
           <div className="mt-0.5 flex items-center gap-3 text-xs text-[var(--text-secondary)]">
             {addon.author && <span>by {addon.author}</span>}
             {addon.version && <span>v{addon.version}</span>}
+            {update && (
+              <span className="text-[var(--teal)]">→ v{update.latest_version}</span>
+            )}
           </div>
         </div>
       </div>

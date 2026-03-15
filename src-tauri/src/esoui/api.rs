@@ -19,7 +19,7 @@ impl EsoUiClient {
 
     /// Discover the MMOUI API feeds for ESO.
     pub async fn init(&mut self) -> Result<(), String> {
-        let configs: Vec<GlobalConfig> = self
+        let config: GlobalConfigResponse = self
             .client
             .get(GLOBAL_CONFIG_URL)
             .send()
@@ -29,14 +29,15 @@ impl EsoUiClient {
             .await
             .map_err(|e| format!("Failed to parse global config: {}", e))?;
 
-        let eso_config = configs
+        let eso_entry = config
+            .games
             .into_iter()
-            .find(|c| c.game_id == ESO_GAME_ID)
+            .find(|g| g.game_id == ESO_GAME_ID)
             .ok_or("ESO not found in global config")?;
 
         let game_config: GameConfig = self
             .client
-            .get(&eso_config.game_config)
+            .get(&eso_entry.game_config)
             .send()
             .await
             .map_err(|e| format!("Failed to fetch game config: {}", e))?
@@ -49,7 +50,9 @@ impl EsoUiClient {
     }
 
     fn feeds(&self) -> Result<&ApiFeeds, String> {
-        self.api_feeds.as_ref().ok_or("API not initialized. Call init() first.".to_string())
+        self.api_feeds
+            .as_ref()
+            .ok_or("API not initialized. Call init() first.".to_string())
     }
 
     /// Fetch the full addon catalog.
@@ -68,7 +71,10 @@ impl EsoUiClient {
     }
 
     /// Fetch details for a specific addon by ID.
-    pub async fn fetch_addon_details(&self, addon_id: &str) -> Result<Vec<AddonDetails>, String> {
+    pub async fn fetch_addon_details(
+        &self,
+        addon_id: &str,
+    ) -> Result<Vec<AddonDetails>, String> {
         let feeds = self.feeds()?;
         let url = format!("{}{}.json", feeds.file_details, addon_id);
         let details: Vec<AddonDetails> = self

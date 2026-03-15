@@ -24,6 +24,7 @@ pub fn run() {
             commands::catalog::search_addons,
             commands::settings::get_addon_path,
             commands::settings::set_addon_path,
+            commands::updates::check_for_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

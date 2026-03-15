@@ -15,3 +15,12 @@ export interface InstalledAddon {
   is_library: boolean;
   description: string;
 }
+
+export interface AddonUpdate {
+  dir_name: string;
+  title: string;
+  installed_version: string;
+  latest_version: string;
+  uid: string;
+  download_url: string | null;
+}
