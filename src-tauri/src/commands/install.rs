@@ -83,3 +83,16 @@ pub async fn install_addon(app_handle: tauri::AppHandle, uid: String) -> Result<
 pub async fn update_addon(app_handle: tauri::AppHandle, uid: String) -> Result<Vec<String>, String> {
     install_addon(app_handle, uid).await
 }
+
+/// Uninstall an addon by removing its directory from the AddOns folder.
+#[tauri::command]
+pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result<(), String> {
+    let addon_path = settings::load_settings(&app_handle)
+        .addon_path
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .or_else(|| paths::detect_addon_path())
+        .ok_or("ESO addon path not configured. Go to Settings to set it.")?;
+
+    installer::uninstall_addon(&addon_path, &dir_name)
+}

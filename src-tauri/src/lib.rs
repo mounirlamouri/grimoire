@@ -46,6 +46,7 @@ pub fn run() {
             commands::updates::check_for_updates,
             commands::install::install_addon,
             commands::install::update_addon,
+            commands::install::uninstall_addon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

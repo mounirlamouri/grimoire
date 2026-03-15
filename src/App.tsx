@@ -263,6 +263,15 @@ function InstalledPage({
       });
   };
 
+  const handleUninstall = async (dirName: string) => {
+    try {
+      await invoke("uninstall_addon", { dirName });
+      loadAddons();
+    } catch (err) {
+      onError(`Uninstall failed: ${err}`);
+    }
+  };
+
   useEffect(() => {
     loadAddons();
   }, []);
@@ -374,6 +383,7 @@ function InstalledPage({
                   key={addon.dir_name}
                   addon={addon}
                   update={updateMap.get(addon.dir_name)}
+                  onUninstall={handleUninstall}
                 />
               ))}
             </div>
@@ -387,11 +397,30 @@ function InstalledPage({
 function AddonCard({
   addon,
   update,
+  onUninstall,
 }: {
   addon: InstalledAddon;
   update?: AddonUpdate;
+  onUninstall: (dirName: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [uninstalling, setUninstalling] = useState(false);
+  const [confirmingUninstall, setConfirmingUninstall] = useState(false);
+
+  const handleUninstall = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setConfirmingUninstall(true);
+  };
+
+  const doUninstall = async () => {
+    setConfirmingUninstall(false);
+    setUninstalling(true);
+    try {
+      await onUninstall(addon.dir_name);
+    } finally {
+      setUninstalling(false);
+    }
+  };
 
   return (
     <div
@@ -425,6 +454,13 @@ function AddonCard({
             )}
           </div>
         </div>
+        <button
+          onClick={handleUninstall}
+          disabled={uninstalling}
+          className="ml-3 shrink-0 rounded border border-red-500/30 px-3 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+        >
+          {uninstalling ? "Removing..." : "Uninstall"}
+        </button>
       </div>
 
       {expanded && (
@@ -453,6 +489,31 @@ function AddonCard({
               </span>
             </div>
           )}
+        </div>
+      )}
+
+      {confirmingUninstall && (
+        <div
+          className="mt-3 flex items-center justify-between rounded border border-red-500/30 bg-red-500/5 p-3"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-sm text-[var(--text-primary)]">
+            Uninstall <strong>{addon.title}</strong>?
+          </span>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setConfirmingUninstall(false)}
+              className="rounded border border-[var(--teal-dim)]/30 px-3 py-1 text-xs text-[var(--text-secondary)] transition hover:bg-white/5"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={doUninstall}
+              className="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white transition hover:brightness-110"
+            >
+              Uninstall
+            </button>
+          </div>
         </div>
       )}
     </div>
