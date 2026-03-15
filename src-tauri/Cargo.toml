@@ -1,0 +1,28 @@
+[package]
+name = "grimoire"
+version = "0.1.0"
+description = "ESO Addon Manager"
+authors = ["mounir"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "grimoire_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5.6", features = [] }
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+tauri = { version = "2.10.3", features = [] }
+tauri-plugin-log = "2"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+rusqlite = { version = "0.33", features = ["bundled"] }
+tokio = { version = "1", features = ["full"] }
+zip = "2"
+dirs = "6"
+tauri-plugin-dialog = "2"
