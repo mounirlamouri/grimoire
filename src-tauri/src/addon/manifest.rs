@@ -34,9 +34,18 @@ pub fn scan_installed_addons(addons_path: &Path) -> Result<Vec<InstalledAddon>, 
         }
 
         let dir_name = entry.file_name().to_string_lossy().to_string();
-        let manifest_path = path.join(format!("{}.txt", &dir_name));
+        // ESO accepts both .txt and .addon manifest extensions
+        let txt_path = path.join(format!("{}.txt", &dir_name));
+        let addon_path = path.join(format!("{}.addon", &dir_name));
+        let manifest_path = if txt_path.exists() {
+            Some(txt_path)
+        } else if addon_path.exists() {
+            Some(addon_path)
+        } else {
+            None
+        };
 
-        if manifest_path.exists() {
+        if let Some(manifest_path) = manifest_path {
             if let Ok(addon) = parse_manifest(&dir_name, &manifest_path) {
                 addons.push(addon);
             }
