@@ -44,6 +44,8 @@ pub fn run() {
             commands::settings::get_sync_interval,
             commands::settings::set_sync_interval,
             commands::updates::check_for_updates,
+            commands::install::install_addon,
+            commands::install::update_addon,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

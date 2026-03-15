@@ -530,6 +530,16 @@ function BrowsePage({
     return () => clearTimeout(timer);
   }, [query, page, loadAddons]);
 
+  const handleInstall = async (uid: string) => {
+    try {
+      await invoke<string[]>("install_addon", { uid });
+      // Refresh installed dirs so the badge updates
+      loadInstalledDirs();
+    } catch (err) {
+      onError(`Install failed: ${err}`);
+    }
+  };
+
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return "Never";
     try {
@@ -608,6 +618,7 @@ function BrowsePage({
                     ? addon.directories.split(",").some((d) => installedDirs.has(d.trim()))
                     : false
                 }
+                onInstall={handleInstall}
               />
             ))}
           </div>
@@ -640,16 +651,29 @@ function BrowsePage({
 function CatalogCard({
   addon,
   installed,
+  onInstall,
 }: {
   addon: CatalogAddon;
   installed: boolean;
+  onInstall: (uid: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [installing, setInstalling] = useState(false);
 
   const formatNumber = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
     return n.toString();
+  };
+
+  const handleInstall = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setInstalling(true);
+    try {
+      await onInstall(addon.uid);
+    } finally {
+      setInstalling(false);
+    }
   };
 
   return (
@@ -687,13 +711,11 @@ function CatalogCard({
         </div>
         {!installed && (
           <button
-            onClick={(e) => {
-              e.stopPropagation();
-              // TODO: implement actual install
-            }}
-            className="ml-3 shrink-0 rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110"
+            onClick={handleInstall}
+            disabled={installing}
+            className="ml-3 shrink-0 rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
           >
-            Install
+            {installing ? "Installing..." : "Install"}
           </button>
         )}
       </div>

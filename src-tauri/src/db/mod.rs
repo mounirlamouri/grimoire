@@ -207,6 +207,21 @@ pub fn lookup_by_dir_name(
     }
 }
 
+/// Look up the download URL for an addon by UID.
+pub fn lookup_download_url(conn: &Connection, uid: &str) -> Result<Option<String>, String> {
+    let result = conn.query_row(
+        "SELECT download_url FROM catalog_addons WHERE uid = ?1",
+        params![uid],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    match result {
+        Ok(Some(url)) => Ok(Some(url)),
+        Ok(None) => Err(format!("Addon {} has no download URL", uid)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup addon {}: {}", uid, e)),
+    }
+}
+
 fn row_to_catalog_addon(row: &rusqlite::Row) -> rusqlite::Result<CatalogAddon> {
     let category_id: Option<String> = row.get(7)?;
     Ok(CatalogAddon {
