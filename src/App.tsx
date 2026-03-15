@@ -1,7 +1,14 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { InstalledAddon, AddonUpdate } from "./types/addon";
+import type {
+  InstalledAddon,
+  AddonUpdate,
+  CatalogAddon,
+  CatalogStatus,
+  SyncProgress,
+} from "./types/addon";
 
 type Tab = "installed" | "browse" | "settings";
 
@@ -52,9 +59,118 @@ function ErrorOverlay({
   );
 }
 
+function SyncModal({ progress }: { progress: SyncProgress | null }) {
+  const pct = progress ? Math.max(0, Math.min(100, progress.progress * 100)) : 0;
+  const isIndeterminate = progress && progress.progress < 0;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="mx-4 w-full max-w-sm rounded-lg border border-[var(--teal-dim)]/40 bg-[var(--bg-secondary)] p-5 shadow-xl">
+        <h3 className="mb-3 text-sm font-semibold text-[var(--accent)]">
+          Syncing Addon Catalog
+        </h3>
+        <p className="mb-3 text-sm text-[var(--text-primary)]">
+          {progress?.detail || "Starting..."}
+        </p>
+        <div className="h-2 overflow-hidden rounded-full bg-[var(--bg-primary)]">
+          {isIndeterminate ? (
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-[var(--teal)]" />
+          ) : (
+            <div
+              className="h-full rounded-full bg-[var(--teal)] transition-all duration-300"
+              style={{ width: `${pct}%` }}
+            />
+          )}
+        </div>
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">
+          {progress?.stage === "done" ? "Complete!" : "Please wait..."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("installed");
   const [globalError, setGlobalError] = useState<string>("");
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
+  const [showSyncModal, setShowSyncModal] = useState(false);
+  const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const doSync = useCallback(
+    async (showModal: boolean) => {
+      if (syncing) return;
+      setSyncing(true);
+      if (showModal) {
+        setShowSyncModal(true);
+        setSyncProgress(null);
+      }
+      try {
+        await invoke<number>("sync_catalog");
+      } catch (err) {
+        setGlobalError(`Catalog sync failed: ${err}`);
+      } finally {
+        setSyncing(false);
+        if (showModal) {
+          // Brief delay so user sees "Complete!"
+          setTimeout(() => setShowSyncModal(false), 600);
+        }
+      }
+    },
+    [syncing]
+  );
+
+  // Listen for sync progress events
+  useEffect(() => {
+    const unlisten = listen<SyncProgress>("catalog-sync-progress", (event) => {
+      setSyncProgress(event.payload);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Startup: check catalog status, sync if needed
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = await invoke<CatalogStatus>("get_catalog_status");
+        if (cancelled) return;
+        if (status.addon_count === 0) {
+          // First run — sync with modal
+          doSync(true);
+        } else {
+          // Background sync if stale
+          doSync(false);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setGlobalError(`Failed to check catalog status: ${err}`);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Periodic sync
+  useEffect(() => {
+    const setupTimer = async () => {
+      const hours = await invoke<number>("get_sync_interval").catch(() => 2);
+      const ms = hours * 60 * 60 * 1000;
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+      syncTimerRef.current = setInterval(() => {
+        doSync(false);
+      }, ms);
+    };
+    setupTimer();
+    return () => {
+      if (syncTimerRef.current) clearInterval(syncTimerRef.current);
+    };
+  }, [doSync]);
 
   return (
     <div className="flex h-screen flex-col">
@@ -64,6 +180,7 @@ function App() {
           onClose={() => setGlobalError("")}
         />
       )}
+      {showSyncModal && <SyncModal progress={syncProgress} />}
       <header className="flex items-center gap-4 border-b border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-6 py-3">
         <h1 className="text-xl font-bold tracking-wide text-[var(--accent)] drop-shadow-[0_0_8px_var(--teal)]">
           Grimoire
@@ -83,11 +200,22 @@ function App() {
             </button>
           ))}
         </nav>
+        {syncing && !showSyncModal && (
+          <span className="ml-auto text-xs text-[var(--teal)] animate-pulse">
+            Syncing catalog...
+          </span>
+        )}
       </header>
 
       <main className="flex-1 overflow-auto p-6">
         {activeTab === "installed" && <InstalledPage onError={setGlobalError} />}
-        {activeTab === "browse" && <BrowsePage />}
+        {activeTab === "browse" && (
+          <BrowsePage
+            onError={setGlobalError}
+            onSync={() => doSync(true)}
+            syncing={syncing}
+          />
+        )}
         {activeTab === "settings" && <SettingsPage />}
       </main>
     </div>
@@ -198,7 +326,8 @@ function InstalledPage({ onError }: { onError: (msg: string) => void }) {
                   >
                     <span>{u.title}</span>
                     <span className="text-[var(--text-secondary)]">
-                      {u.installed_version} → <span className="text-[var(--teal)]">{u.latest_version}</span>
+                      {u.installed_version} →{" "}
+                      <span className="text-[var(--teal)]">{u.latest_version}</span>
                     </span>
                   </div>
                 ))}
@@ -323,13 +452,236 @@ function AddonCard({
   );
 }
 
-function BrowsePage() {
+function BrowsePage({
+  onError,
+  onSync,
+  syncing,
+}: {
+  onError: (msg: string) => void;
+  onSync: () => void;
+  syncing: boolean;
+}) {
+  const [addons, setAddons] = useState<CatalogAddon[]>([]);
+  const [query, setQuery] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<CatalogStatus | null>(null);
+  const [page, setPage] = useState(0);
+  const [installedDirs, setInstalledDirs] = useState<Set<string>>(new Set());
+  const PAGE_SIZE = 50;
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const s = await invoke<CatalogStatus>("get_catalog_status");
+      setStatus(s);
+      return s;
+    } catch (err) {
+      onError(`Failed to get catalog status: ${err}`);
+      return null;
+    }
+  }, [onError]);
+
+  const loadInstalledDirs = useCallback(async () => {
+    try {
+      const installed = await invoke<InstalledAddon[]>("get_installed_addons");
+      setInstalledDirs(new Set(installed.map((a) => a.dir_name)));
+    } catch {
+      // Non-critical — just won't show installed badges
+    }
+  }, []);
+
+  const loadAddons = useCallback(
+    async (q: string, pageNum: number) => {
+      setLoading(true);
+      try {
+        const results = await invoke<CatalogAddon[]>("search_addons", {
+          query: q,
+          limit: PAGE_SIZE,
+          offset: pageNum * PAGE_SIZE,
+        });
+        setAddons(results);
+      } catch (err) {
+        onError(`Failed to load catalog: ${err}`);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [onError]
+  );
+
+  // Load on mount and when syncing finishes
+  useEffect(() => {
+    loadInstalledDirs();
+    loadStatus().then(() => loadAddons(query, page));
+  }, [syncing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reload when query or page changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      loadAddons(query, page);
+    }, 300); // debounce search
+    return () => clearTimeout(timer);
+  }, [query, page, loadAddons]);
+
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return "Never";
+    try {
+      return new Date(dateStr).toLocaleString();
+    } catch {
+      return dateStr;
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold">Browse Addons</h2>
-      <p className="text-[var(--text-secondary)]">
-        Addon catalog will appear here once synced.
-      </p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <h2 className="text-lg font-semibold">Browse Addons</h2>
+          {status && (
+            <span className="text-xs text-[var(--text-secondary)]">
+              {status.addon_count.toLocaleString()} addons
+              {status.last_sync && (
+                <span className="ml-1">
+                  — last synced {formatDate(status.last_sync)}
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onSync}
+          disabled={syncing}
+          className="rounded border border-[var(--teal)]/30 px-3 py-1.5 text-sm text-[var(--teal)] transition hover:bg-[var(--teal)]/10 disabled:opacity-50"
+        >
+          {syncing ? "Syncing..." : "Force Sync"}
+        </button>
+      </div>
+
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setPage(0);
+        }}
+        placeholder="Search addons by name or author..."
+        className="w-full rounded border border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-3 py-2 text-sm text-white placeholder:text-[var(--text-secondary)]"
+      />
+
+      {loading && addons.length === 0 ? (
+        <p className="text-[var(--text-secondary)]">Loading catalog...</p>
+      ) : addons.length === 0 ? (
+        <p className="text-[var(--text-secondary)]">
+          {status?.addon_count === 0
+            ? "Catalog is empty. Click 'Force Sync' to fetch the addon list."
+            : "No addons match your search."}
+        </p>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {addons.map((addon) => (
+              <CatalogCard
+                key={addon.uid}
+                addon={addon}
+                installed={
+                  addon.directories
+                    ? addon.directories.split(",").some((d) => installedDirs.has(d.trim()))
+                    : false
+                }
+              />
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between pt-2">
+            <button
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white disabled:opacity-30"
+            >
+              Previous
+            </button>
+            <span className="text-xs text-[var(--text-secondary)]">
+              Page {page + 1}
+            </span>
+            <button
+              onClick={() => setPage((p) => p + 1)}
+              disabled={addons.length < PAGE_SIZE}
+              className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white disabled:opacity-30"
+            >
+              Next
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function CatalogCard({
+  addon,
+  installed,
+}: {
+  addon: CatalogAddon;
+  installed: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  const formatNumber = (n: number) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
+    return n.toString();
+  };
+
+  return (
+    <div
+      className="cursor-pointer rounded-lg border border-[var(--teal-dim)]/20 bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40"
+      onClick={() => setExpanded(!expanded)}
+    >
+      <div className="flex items-start justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-medium">{addon.name}</span>
+            {addon.version && (
+              <span className="text-xs text-[var(--text-secondary)]">
+                v{addon.version}
+              </span>
+            )}
+            {installed && (
+              <span className="rounded bg-[var(--teal)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--teal)]">
+                INSTALLED
+              </span>
+            )}
+          </div>
+          <div className="mt-0.5 flex items-center gap-3 text-xs text-[var(--text-secondary)]">
+            {addon.author && <span>by {addon.author}</span>}
+            <span>{formatNumber(addon.downloads)} downloads</span>
+            {addon.favorites > 0 && (
+              <span>{formatNumber(addon.favorites)} favorites</span>
+            )}
+          </div>
+        </div>
+        {!installed && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              // TODO: implement actual install
+            }}
+            className="ml-3 shrink-0 rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110"
+          >
+            Install
+          </button>
+        )}
+      </div>
+
+      {expanded && (
+        <div className="mt-3 space-y-2 border-t border-white/5 pt-3 text-xs">
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--text-secondary)]">
+            {addon.directories && <span>Folders: {addon.directories}</span>}
+            {addon.downloads_monthly > 0 && (
+              <span>Monthly: {formatNumber(addon.downloads_monthly)}</span>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -337,6 +689,8 @@ function BrowsePage() {
 function SettingsPage() {
   const [addonPath, setAddonPath] = useState<string>("");
   const [status, setStatus] = useState<string>("");
+  const [syncInterval, setSyncInterval] = useState<number>(2);
+  const [syncStatus, setSyncStatus] = useState<string>("");
 
   useEffect(() => {
     invoke<string | null>("get_addon_path")
@@ -349,6 +703,10 @@ function SettingsPage() {
         }
       })
       .catch(() => setStatus("Failed to detect addon path"));
+
+    invoke<number>("get_sync_interval")
+      .then((hours) => setSyncInterval(hours))
+      .catch(() => {});
   }, []);
 
   const handleBrowse = async () => {
@@ -367,9 +725,23 @@ function SettingsPage() {
     }
   };
 
+  const handleSyncIntervalChange = async (value: string) => {
+    const hours = parseFloat(value);
+    if (isNaN(hours) || hours < 0.1) return;
+    setSyncInterval(hours);
+    try {
+      await invoke("set_sync_interval", { hours });
+      setSyncStatus("Saved");
+      setTimeout(() => setSyncStatus(""), 2000);
+    } catch (err) {
+      setSyncStatus(`Error: ${err}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Settings</h2>
+
       <div className="rounded-lg bg-[var(--bg-card)] p-4">
         <label className="block text-sm font-medium text-[var(--text-secondary)]">
           ESO Addons Path
@@ -392,6 +764,29 @@ function SettingsPage() {
         {status && (
           <p className="mt-2 text-xs text-[var(--text-secondary)]">{status}</p>
         )}
+      </div>
+
+      <div className="rounded-lg bg-[var(--bg-card)] p-4">
+        <label className="block text-sm font-medium text-[var(--text-secondary)]">
+          Catalog Sync Interval
+        </label>
+        <div className="mt-2 flex items-center gap-3">
+          <input
+            type="number"
+            min="0.1"
+            step="0.5"
+            value={syncInterval}
+            onChange={(e) => handleSyncIntervalChange(e.target.value)}
+            className="w-24 rounded border border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-3 py-2 text-sm text-white"
+          />
+          <span className="text-sm text-[var(--text-secondary)]">hours</span>
+          {syncStatus && (
+            <span className="text-xs text-[var(--teal)]">{syncStatus}</span>
+          )}
+        </div>
+        <p className="mt-2 text-xs text-[var(--text-secondary)]">
+          How often the addon catalog is automatically refreshed from ESOUI.
+        </p>
       </div>
     </div>
   );

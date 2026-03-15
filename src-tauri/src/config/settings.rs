@@ -2,9 +2,25 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use tauri::Manager;
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AppSettings {
     pub addon_path: Option<String>,
+    /// How often to auto-sync the catalog, in hours. Default: 2.
+    #[serde(default = "default_sync_interval")]
+    pub sync_interval_hours: f64,
+}
+
+fn default_sync_interval() -> f64 {
+    2.0
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            addon_path: None,
+            sync_interval_hours: default_sync_interval(),
+        }
+    }
 }
 
 fn settings_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
