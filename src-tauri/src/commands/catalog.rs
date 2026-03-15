@@ -1,6 +1,10 @@
+use crate::addon::manifest::scan_installed_addons;
+use crate::commands::updates::compute_updates;
+use crate::config::{paths, settings};
 use crate::db::{self, CatalogAddon};
 use crate::esoui::api::EsoUiClient;
 use rusqlite::Connection;
+use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
@@ -107,6 +111,21 @@ pub async fn sync_catalog(app_handle: tauri::AppHandle) -> Result<i64, String> {
         &format!("Synced {} addons", count),
         1.0,
     );
+
+    // After sync, check for updates and emit results
+    let addon_path = settings::load_settings(&app_handle)
+        .addon_path
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .or_else(|| paths::detect_addon_path());
+
+    if let Some(path) = addon_path {
+        if let Ok(installed) = scan_installed_addons(&path) {
+            if let Ok(updates) = compute_updates(&conn, &installed) {
+                let _ = app_handle.emit("updates-available", &updates);
+            }
+        }
+    }
 
     Ok(count)
 }

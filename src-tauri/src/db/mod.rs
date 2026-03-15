@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
 );
 ";
 
+/// ESOUI category ID for libraries.
+const LIBRARY_CATEGORY_ID: &str = "53";
+
 /// A row from catalog_addons, returned to the frontend.
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct CatalogAddon {
@@ -41,6 +44,11 @@ pub struct CatalogAddon {
     pub author: Option<String>,
     pub download_url: Option<String>,
     pub file_info_url: Option<String>,
+    pub is_library: bool,
+}
+
+fn is_library(category_id: &Option<String>) -> bool {
+    category_id.as_deref() == Some(LIBRARY_CATEGORY_ID)
 }
 
 pub fn open_db(db_path: &Path) -> Result<Connection, String> {
@@ -134,28 +142,10 @@ pub fn search_catalog(
         .map_err(|e| format!("Failed to prepare search: {}", e))?;
 
     let rows = stmt
-        .query_map(params![pattern, limit, offset], |row| {
-            Ok(CatalogAddon {
-                uid: row.get(0)?,
-                name: row.get(1)?,
-                version: row.get(2)?,
-                downloads: row.get(3)?,
-                favorites: row.get(4)?,
-                downloads_monthly: row.get(5)?,
-                directories: row.get(6)?,
-                category_id: row.get(7)?,
-                author: row.get(8)?,
-                download_url: row.get(9)?,
-                file_info_url: row.get(10)?,
-            })
-        })
+        .query_map(params![pattern, limit, offset], row_to_catalog_addon)
         .map_err(|e| format!("Failed to search catalog: {}", e))?;
 
-    let mut results = Vec::new();
-    for row in rows {
-        results.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
-    }
-    Ok(results)
+    collect_rows(rows)
 }
 
 /// Browse the catalog (all addons, paginated, sorted by downloads).
@@ -174,26 +164,68 @@ pub fn browse_catalog(
         .map_err(|e| format!("Failed to prepare browse: {}", e))?;
 
     let rows = stmt
-        .query_map(params![limit, offset], |row| {
-            Ok(CatalogAddon {
-                uid: row.get(0)?,
-                name: row.get(1)?,
-                version: row.get(2)?,
-                downloads: row.get(3)?,
-                favorites: row.get(4)?,
-                downloads_monthly: row.get(5)?,
-                directories: row.get(6)?,
-                category_id: row.get(7)?,
-                author: row.get(8)?,
-                download_url: row.get(9)?,
-                file_info_url: row.get(10)?,
-            })
-        })
+        .query_map(params![limit, offset], row_to_catalog_addon)
         .map_err(|e| format!("Failed to browse catalog: {}", e))?;
 
-    let mut results = Vec::new();
-    for row in rows {
-        results.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+    collect_rows(rows)
+}
+
+/// Look up a catalog entry by directory name (matches within the comma-separated directories column).
+/// Returns (version, uid, download_url) if found.
+pub fn lookup_by_dir_name(
+    conn: &Connection,
+    dir_name: &str,
+) -> Result<Option<(Option<String>, String, Option<String>)>, String> {
+    // directories is stored as comma-separated, so we match exact name or surrounded by commas
+    let mut stmt = conn
+        .prepare(
+            "SELECT version, uid, download_url FROM catalog_addons
+             WHERE directories = ?1
+                OR directories LIKE ?2
+                OR directories LIKE ?3
+                OR directories LIKE ?4",
+        )
+        .map_err(|e| format!("Failed to prepare lookup: {}", e))?;
+
+    let exact = dir_name;
+    let starts = format!("{},%", dir_name);
+    let ends = format!("%,{}", dir_name);
+    let middle = format!("%,{},%", dir_name);
+
+    let result = stmt.query_row(params![exact, starts, ends, middle], |row| {
+        Ok((
+            row.get::<_, Option<String>>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<String>>(2)?,
+        ))
+    });
+
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup dir {}: {}", dir_name, e)),
     }
-    Ok(results)
+}
+
+fn row_to_catalog_addon(row: &rusqlite::Row) -> rusqlite::Result<CatalogAddon> {
+    let category_id: Option<String> = row.get(7)?;
+    Ok(CatalogAddon {
+        uid: row.get(0)?,
+        name: row.get(1)?,
+        version: row.get(2)?,
+        downloads: row.get(3)?,
+        favorites: row.get(4)?,
+        downloads_monthly: row.get(5)?,
+        directories: row.get(6)?,
+        is_library: is_library(&category_id),
+        category_id,
+        author: row.get(8)?,
+        download_url: row.get(9)?,
+        file_info_url: row.get(10)?,
+    })
+}
+
+fn collect_rows(rows: impl Iterator<Item = rusqlite::Result<CatalogAddon>>) -> Result<Vec<CatalogAddon>, String> {
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("Failed to read row: {}", e))
 }

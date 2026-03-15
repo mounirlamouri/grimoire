@@ -37,6 +37,7 @@ export interface CatalogAddon {
   author: string | null;
   download_url: string | null;
   file_info_url: string | null;
+  is_library: boolean;
 }
 
 export interface CatalogStatus {

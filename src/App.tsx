@@ -96,6 +96,7 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
+  const [updates, setUpdates] = useState<AddonUpdate[]>([]);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const doSync = useCallback(
@@ -121,13 +122,17 @@ function App() {
     [syncing]
   );
 
-  // Listen for sync progress events
+  // Listen for sync progress and update events
   useEffect(() => {
-    const unlisten = listen<SyncProgress>("catalog-sync-progress", (event) => {
+    const unlistenProgress = listen<SyncProgress>("catalog-sync-progress", (event) => {
       setSyncProgress(event.payload);
     });
+    const unlistenUpdates = listen<AddonUpdate[]>("updates-available", (event) => {
+      setUpdates(event.payload);
+    });
     return () => {
-      unlisten.then((fn) => fn());
+      unlistenProgress.then((fn) => fn());
+      unlistenUpdates.then((fn) => fn());
     };
   }, []);
 
@@ -208,7 +213,14 @@ function App() {
       </header>
 
       <main className="flex-1 overflow-auto p-6">
-        {activeTab === "installed" && <InstalledPage onError={setGlobalError} />}
+        {activeTab === "installed" && (
+          <InstalledPage
+            onError={setGlobalError}
+            updates={updates}
+            onCheckUpdates={() => doSync(true)}
+            checking={syncing}
+          />
+        )}
         {activeTab === "browse" && (
           <BrowsePage
             onError={setGlobalError}
@@ -222,11 +234,19 @@ function App() {
   );
 }
 
-function InstalledPage({ onError }: { onError: (msg: string) => void }) {
+function InstalledPage({
+  onError,
+  updates,
+  onCheckUpdates,
+  checking,
+}: {
+  onError: (msg: string) => void;
+  updates: AddonUpdate[];
+  onCheckUpdates: () => void;
+  checking: boolean;
+}) {
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
-  const [updates, setUpdates] = useState<AddonUpdate[]>([]);
   const [loading, setLoading] = useState(true);
-  const [checking, setChecking] = useState(false);
   const [filter, setFilter] = useState("");
   const [showLibraries, setShowLibraries] = useState(false);
 
@@ -240,19 +260,6 @@ function InstalledPage({ onError }: { onError: (msg: string) => void }) {
       .catch((err) => {
         onError(String(err));
         setLoading(false);
-      });
-  };
-
-  const checkUpdates = () => {
-    setChecking(true);
-    invoke<AddonUpdate[]>("check_for_updates")
-      .then((result) => {
-        setUpdates(result);
-        setChecking(false);
-      })
-      .catch((err) => {
-        onError(`Update check failed: ${err}`);
-        setChecking(false);
       });
   };
 
@@ -300,7 +307,7 @@ function InstalledPage({ onError }: { onError: (msg: string) => void }) {
             Refresh
           </button>
           <button
-            onClick={checkUpdates}
+            onClick={onCheckUpdates}
             disabled={checking || loading}
             className="rounded border border-[var(--teal)]/30 px-3 py-1.5 text-sm text-[var(--teal)] transition hover:bg-[var(--teal)]/10 disabled:opacity-50"
           >
@@ -467,6 +474,7 @@ function BrowsePage({
   const [status, setStatus] = useState<CatalogStatus | null>(null);
   const [page, setPage] = useState(0);
   const [installedDirs, setInstalledDirs] = useState<Set<string>>(new Set());
+  const [showLibraries, setShowLibraries] = useState(false);
   const PAGE_SIZE = 50;
 
   const loadStatus = useCallback(async () => {
@@ -531,6 +539,8 @@ function BrowsePage({
     }
   };
 
+  const filtered = showLibraries ? addons : addons.filter((a) => !a.is_library);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -556,20 +566,31 @@ function BrowsePage({
         </button>
       </div>
 
-      <input
-        type="text"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-          setPage(0);
-        }}
-        placeholder="Search addons by name or author..."
-        className="w-full rounded border border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-3 py-2 text-sm text-white placeholder:text-[var(--text-secondary)]"
-      />
+      <div className="flex items-center gap-3">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setPage(0);
+          }}
+          placeholder="Search addons by name or author..."
+          className="flex-1 rounded border border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-3 py-2 text-sm text-white placeholder:text-[var(--text-secondary)]"
+        />
+        <label className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+          <input
+            type="checkbox"
+            checked={showLibraries}
+            onChange={(e) => setShowLibraries(e.target.checked)}
+            className="accent-[var(--teal)]"
+          />
+          Show libraries
+        </label>
+      </div>
 
-      {loading && addons.length === 0 ? (
+      {loading && filtered.length === 0 ? (
         <p className="text-[var(--text-secondary)]">Loading catalog...</p>
-      ) : addons.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <p className="text-[var(--text-secondary)]">
           {status?.addon_count === 0
             ? "Catalog is empty. Click 'Force Sync' to fetch the addon list."
@@ -578,7 +599,7 @@ function BrowsePage({
       ) : (
         <>
           <div className="space-y-2">
-            {addons.map((addon) => (
+            {filtered.map((addon) => (
               <CatalogCard
                 key={addon.uid}
                 addon={addon}
@@ -604,7 +625,7 @@ function BrowsePage({
             </span>
             <button
               onClick={() => setPage((p) => p + 1)}
-              disabled={addons.length < PAGE_SIZE}
+              disabled={filtered.length < PAGE_SIZE}
               className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white disabled:opacity-30"
             >
               Next
@@ -643,6 +664,11 @@ function CatalogCard({
             {addon.version && (
               <span className="text-xs text-[var(--text-secondary)]">
                 v{addon.version}
+              </span>
+            )}
+            {addon.is_library && (
+              <span className="rounded bg-[var(--teal-dim)]/30 px-1.5 py-0.5 text-[10px] font-medium text-[var(--teal)]">
+                LIB
               </span>
             )}
             {installed && (
@@ -785,7 +811,7 @@ function SettingsPage() {
           )}
         </div>
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
-          How often the addon catalog is automatically refreshed from ESOUI.
+          How often the addon catalog and update information is automatically refreshed from ESOUI.
         </p>
       </div>
     </div>

@@ -1,12 +1,16 @@
 use crate::addon::manifest::{scan_installed_addons, InstalledAddon};
 use crate::config::{paths, settings};
-use crate::esoui::api::EsoUiClient;
-use crate::esoui::models::{AddonListItem, AddonUpdate};
-use std::collections::HashMap;
+use crate::db;
+use crate::esoui::models::AddonUpdate;
+use rusqlite::Connection;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::Manager;
 
+/// Check for addon updates using the local SQLite catalog.
+/// Returns updates found based on the last synced catalog data.
 #[tauri::command]
-pub async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<Vec<AddonUpdate>, String> {
+pub fn check_for_updates(app_handle: tauri::AppHandle) -> Result<Vec<AddonUpdate>, String> {
     let addon_path = settings::load_settings(&app_handle)
         .addon_path
         .map(PathBuf::from)
@@ -19,40 +23,34 @@ pub async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<Vec<Addon
         return Ok(vec![]);
     }
 
-    // Fetch the full catalog from MMOUI
-    let mut client = EsoUiClient::new();
-    client.init().await?;
-    let catalog = client.fetch_file_list().await?;
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    let conn = db_state
+        .lock()
+        .map_err(|e| format!("DB lock error: {}", e))?;
 
-    // Build a lookup: directory name -> catalog entry
-    // UIDir can contain multiple comma-separated directory names
-    let mut dir_to_catalog: HashMap<String, &AddonListItem> = HashMap::new();
-    for item in &catalog {
-        if let Some(ref dirs) = item.ui_dir {
-            for dir in dirs {
-                let dir = dir.trim();
-                if !dir.is_empty() {
-                    dir_to_catalog.insert(dir.to_string(), item);
-                }
-            }
-        }
-    }
+    compute_updates(&conn, &installed)
+}
 
-    // Compare installed vs catalog
+/// Compute updates by comparing installed addons against the SQLite catalog.
+/// This is also called internally after catalog sync.
+pub fn compute_updates(
+    conn: &Connection,
+    installed: &[InstalledAddon],
+) -> Result<Vec<AddonUpdate>, String> {
     let mut updates = Vec::new();
-    for addon in &installed {
-        if let Some(catalog_entry) = dir_to_catalog.get(&addon.dir_name) {
-            if has_update(addon, catalog_entry) {
+
+    for addon in installed {
+        if let Some((catalog_version, uid, download_url)) =
+            db::lookup_by_dir_name(conn, &addon.dir_name)?
+        {
+            if has_update(&addon.version, &catalog_version) {
                 updates.push(AddonUpdate {
                     dir_name: addon.dir_name.clone(),
                     title: addon.title.clone(),
                     installed_version: addon.version.clone(),
-                    latest_version: catalog_entry
-                        .ui_version
-                        .clone()
-                        .unwrap_or_default(),
-                    uid: catalog_entry.uid.clone(),
-                    download_url: catalog_entry.ui_download.clone(),
+                    latest_version: catalog_version.unwrap_or_default(),
+                    uid,
+                    download_url,
                 });
             }
         }
@@ -62,27 +60,24 @@ pub async fn check_for_updates(app_handle: tauri::AppHandle) -> Result<Vec<Addon
     Ok(updates)
 }
 
-/// Determine if a catalog entry is newer than the installed addon.
-/// Compares version strings — if they differ, assume an update is available.
-fn has_update(installed: &InstalledAddon, catalog: &AddonListItem) -> bool {
-    let latest = match &catalog.ui_version {
+/// Determine if a catalog version is newer than the installed version.
+fn has_update(installed_version: &str, catalog_version: &Option<String>) -> bool {
+    let latest = match catalog_version {
         Some(v) if !v.is_empty() => v,
         _ => return false,
     };
 
-    // If installed version string is empty, we can't compare
-    if installed.version.is_empty() {
+    if installed_version.is_empty() {
         return false;
     }
 
-    // If versions are identical strings, no update
-    if installed.version == *latest {
+    if installed_version == latest {
         return false;
     }
 
     // Try semantic comparison: parse as dot-separated integers
     if let (Some(installed_parts), Some(latest_parts)) =
-        (parse_version(&installed.version), parse_version(latest))
+        (parse_version(installed_version), parse_version(latest))
     {
         return latest_parts > installed_parts;
     }
