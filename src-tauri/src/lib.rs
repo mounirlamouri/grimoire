@@ -36,6 +36,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::addons::get_installed_addons,
+            commands::addons::find_orphaned_libraries,
             commands::catalog::sync_catalog,
             commands::catalog::get_catalog_status,
             commands::catalog::search_addons,
