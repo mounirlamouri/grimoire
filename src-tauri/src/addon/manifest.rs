@@ -105,6 +105,9 @@ fn parse_manifest(dir_name: &str, path: &Path) -> Result<InstalledAddon, String>
                 .collect();
         } else if let Some(value) = line.strip_prefix("## DependsOn:") {
             addon.depends_on = parse_dependencies(value);
+        } else if let Some(value) = line.strip_prefix("## PCDependsOn:") {
+            // Some addons use PCDependsOn for PC-specific dependencies (vs console)
+            addon.depends_on.extend(parse_dependencies(value));
         } else if let Some(value) = line.strip_prefix("## OptionalDependsOn:") {
             addon.optional_depends_on = parse_dependencies(value);
         } else if let Some(value) = line.strip_prefix("## IsLibrary:") {
