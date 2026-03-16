@@ -22,6 +22,22 @@ pub struct Dependency {
     pub min_version: Option<u32>,
 }
 
+/// Parse the manifest for a single addon directory.
+/// Returns None if the directory has no valid manifest.
+pub fn parse_single_manifest(addons_path: &Path, dir_name: &str) -> Option<InstalledAddon> {
+    let dir = addons_path.join(dir_name);
+    let txt_path = dir.join(format!("{}.txt", dir_name));
+    let addon_path = dir.join(format!("{}.addon", dir_name));
+    let manifest_path = if txt_path.exists() {
+        txt_path
+    } else if addon_path.exists() {
+        addon_path
+    } else {
+        return None;
+    };
+    parse_manifest(dir_name, &manifest_path).ok()
+}
+
 /// Scan the AddOns directory and parse all addon manifests.
 pub fn scan_installed_addons(addons_path: &Path) -> Result<Vec<InstalledAddon>, std::io::Error> {
     let mut addons = Vec::new();

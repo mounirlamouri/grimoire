@@ -8,6 +8,7 @@ import type {
   CatalogAddon,
   CatalogStatus,
   SyncProgress,
+  InstallResult,
 } from "./types/addon";
 
 type Tab = "installed" | "browse" | "settings";
@@ -28,8 +29,8 @@ function ErrorOverlay({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="mx-4 max-w-lg rounded-lg border border-[var(--accent)]/40 bg-[var(--bg-secondary)] p-5 shadow-xl">
-        <h3 className="mb-2 text-sm font-semibold text-[var(--accent)]">Error</h3>
+      <div className="mx-4 max-w-lg rounded-lg border border-red-500/40 bg-[var(--bg-secondary)] p-5 shadow-xl">
+        <h3 className="mb-2 text-sm font-semibold text-red-400">Error</h3>
         <p className="mb-3 text-sm text-[var(--text-primary)]">{summary}</p>
         {details && (
           <>
@@ -49,7 +50,7 @@ function ErrorOverlay({
         <div>
           <button
             onClick={onClose}
-            className="rounded bg-[var(--accent)] px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
+            className="rounded bg-red-500 px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
           >
             Dismiss
           </button>
@@ -286,9 +287,19 @@ function InstalledPage({
 
   const handleUpdate = async (uid: string) => {
     try {
-      await invoke<string[]>("update_addon", { uid });
+      const result = await invoke<InstallResult>("update_addon", { uid });
       onUpdateDone(uid);
       loadAddons();
+      const errors: string[] = [];
+      if (result.missing_deps.length > 0) {
+        errors.push(`Some required dependencies could not be found on ESOUI: ${result.missing_deps.join(", ")}`);
+      }
+      if (result.failed_deps.length > 0) {
+        errors.push(`Failed to install some dependencies: ${result.failed_deps.map((d) => `${d.dir_name} (${d.error})`).join(", ")}`);
+      }
+      if (errors.length > 0) {
+        onError(`The addon was updated successfully, but it may not function properly.\n\n${errors.join("\n\n")}`);
+      }
     } catch (err) {
       onError(`Update failed: ${err}`);
     }
@@ -860,9 +871,22 @@ function BrowsePage({
 
   const handleInstall = async (uid: string) => {
     try {
-      await invoke<string[]>("install_addon", { uid });
-      // Refresh installed dirs so the badge updates
+      const result = await invoke<InstallResult>("install_addon", { uid });
       loadInstalledDirs();
+      const errors: string[] = [];
+      if (result.missing_deps.length > 0) {
+        errors.push(
+          `Some required dependencies could not be found on ESOUI: ${result.missing_deps.join(", ")}`
+        );
+      }
+      if (result.failed_deps.length > 0) {
+        errors.push(
+          `Failed to install some dependencies: ${result.failed_deps.map((d) => `${d.dir_name} (${d.error})`).join(", ")}`
+        );
+      }
+      if (errors.length > 0) {
+        onError(`The addon was installed successfully, but it may not function properly because some required dependencies could not be found on ESOUI: ${[...result.missing_deps, ...result.failed_deps.map((d) => d.dir_name)].join(", ")}`);
+      }
     } catch (err) {
       onError(`Install failed: ${err}`);
     }

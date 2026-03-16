@@ -26,6 +26,23 @@ export interface AddonUpdate {
   version_mismatch: boolean;
 }
 
+export interface InstallResult {
+  installed_dirs: string[];
+  auto_installed_deps: AutoInstalledDep[];
+  missing_deps: string[];
+  failed_deps: FailedDep[];
+}
+
+export interface AutoInstalledDep {
+  dir_name: string;
+  name: string;
+}
+
+export interface FailedDep {
+  dir_name: string;
+  error: string;
+}
+
 export interface CatalogAddon {
   uid: string;
   name: string;
