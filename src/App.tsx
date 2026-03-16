@@ -22,10 +22,10 @@ function ErrorOverlay({
 }) {
   const [showDetails, setShowDetails] = useState(false);
 
-  // Split into summary (first line / before colon chain) and details
-  const colonIdx = message.indexOf(": ");
-  const summary = colonIdx > 0 ? message.slice(0, colonIdx) : message;
-  const details = colonIdx > 0 ? message : null;
+  // Split on first double-newline: first paragraph is summary, rest is details
+  const splitIdx = message.indexOf("\n\n");
+  const summary = splitIdx > 0 ? message.slice(0, splitIdx) : message;
+  const details = splitIdx > 0 ? message.slice(splitIdx + 2) : null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
@@ -42,7 +42,7 @@ function ErrorOverlay({
             </button>
             {showDetails && (
               <pre className="mb-3 max-h-48 overflow-auto rounded border border-white/10 bg-[var(--bg-primary)] p-3 text-xs text-[var(--text-secondary)]">
-                {message}
+                {details}
               </pre>
             )}
           </>
@@ -51,6 +51,50 @@ function ErrorOverlay({
           <button
             onClick={onClose}
             className="rounded bg-red-500 px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SuccessOverlay({
+  message,
+  details,
+  onClose,
+}: {
+  message: string;
+  details: string | null;
+  onClose: () => void;
+}) {
+  const [showDetails, setShowDetails] = useState(false);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="mx-4 max-w-lg rounded-lg border border-emerald-500/40 bg-[var(--bg-secondary)] p-5 shadow-xl">
+        <h3 className="mb-2 text-sm font-semibold text-emerald-400">Success</h3>
+        <p className="mb-3 text-sm text-[var(--text-primary)]">{message}</p>
+        {details && (
+          <>
+            <button
+              onClick={() => setShowDetails(!showDetails)}
+              className="mb-3 text-xs text-[var(--text-secondary)] underline transition hover:text-white"
+            >
+              {showDetails ? "Hide details" : "Show details"}
+            </button>
+            {showDetails && (
+              <pre className="mb-3 max-h-48 overflow-auto rounded border border-white/10 bg-[var(--bg-primary)] p-3 text-xs text-[var(--text-secondary)]">
+                {details}
+              </pre>
+            )}
+          </>
+        )}
+        <div>
+          <button
+            onClick={onClose}
+            className="rounded bg-emerald-500 px-4 py-1.5 text-sm font-medium text-white transition hover:brightness-110"
           >
             Dismiss
           </button>
@@ -94,6 +138,7 @@ function SyncModal({ progress }: { progress: SyncProgress | null }) {
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>("installed");
   const [globalError, setGlobalError] = useState<string>("");
+  const [successMsg, setSuccessMsg] = useState<{ message: string; details: string | null } | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
@@ -191,6 +236,13 @@ function App() {
           onClose={() => setGlobalError("")}
         />
       )}
+      {successMsg && (
+        <SuccessOverlay
+          message={successMsg.message}
+          details={successMsg.details}
+          onClose={() => setSuccessMsg(null)}
+        />
+      )}
       {showSyncModal && <SyncModal progress={syncProgress} />}
       <header className="flex items-center gap-4 border-b border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-6 py-3">
         <h1 className="text-xl font-bold tracking-wide text-[var(--accent)] drop-shadow-[0_0_8px_var(--teal)]">
@@ -222,6 +274,7 @@ function App() {
         {activeTab === "installed" && (
           <InstalledPage
             onError={setGlobalError}
+            onSuccess={setSuccessMsg}
             updates={updates}
             onCheckUpdates={() => doSync(true)}
             checking={syncing}
@@ -233,6 +286,7 @@ function App() {
         {activeTab === "browse" && (
           <BrowsePage
             onError={setGlobalError}
+            onSuccess={setSuccessMsg}
             onSync={() => doSync(true)}
             syncing={syncing}
           />
@@ -245,12 +299,14 @@ function App() {
 
 function InstalledPage({
   onError,
+  onSuccess,
   updates,
   onCheckUpdates,
   checking,
   onUpdateDone,
 }: {
   onError: (msg: string) => void;
+  onSuccess: (msg: { message: string; details: string | null }) => void;
   updates: AddonUpdate[];
   onCheckUpdates: () => void;
   checking: boolean;
@@ -298,7 +354,16 @@ function InstalledPage({
         errors.push(`Failed to install some dependencies: ${result.failed_deps.map((d) => `${d.dir_name} (${d.error})`).join(", ")}`);
       }
       if (errors.length > 0) {
+        if (result.auto_installed_deps.length > 0) {
+          errors.push(`Automatically installed dependencies: ${result.auto_installed_deps.map((d) => d.name).join(", ")}`);
+        }
         onError(`The addon was updated successfully, but it may not function properly.\n\n${errors.join("\n\n")}`);
+      } else {
+        const deps = result.auto_installed_deps;
+        onSuccess({
+          message: "The addon was updated successfully.",
+          details: deps.length > 0 ? `Automatically installed dependencies: ${deps.map((d) => d.name).join(", ")}` : null,
+        });
       }
     } catch (err) {
       onError(`Update failed: ${err}`);
@@ -800,10 +865,12 @@ function AddonCard({
 
 function BrowsePage({
   onError,
+  onSuccess,
   onSync,
   syncing,
 }: {
   onError: (msg: string) => void;
+  onSuccess: (msg: { message: string; details: string | null }) => void;
   onSync: () => void;
   syncing: boolean;
 }) {
@@ -885,7 +952,16 @@ function BrowsePage({
         );
       }
       if (errors.length > 0) {
-        onError(`The addon was installed successfully, but it may not function properly because some required dependencies could not be found on ESOUI: ${[...result.missing_deps, ...result.failed_deps.map((d) => d.dir_name)].join(", ")}`);
+        if (result.auto_installed_deps.length > 0) {
+          errors.push(`Automatically installed dependencies: ${result.auto_installed_deps.map((d) => d.name).join(", ")}`);
+        }
+        onError(`The addon was installed successfully, but it may not function properly because some dependencies could not be installed.\n\n${errors.join("\n\n")}`);
+      } else {
+        const deps = result.auto_installed_deps;
+        onSuccess({
+          message: "The addon was installed successfully.",
+          details: deps.length > 0 ? `Automatically installed dependencies: ${deps.map((d) => d.name).join(", ")}` : null,
+        });
       }
     } catch (err) {
       onError(`Install failed: ${err}`);
