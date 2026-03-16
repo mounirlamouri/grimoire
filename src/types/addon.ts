@@ -23,6 +23,7 @@ export interface AddonUpdate {
   latest_version: string;
   uid: string;
   download_url: string | null;
+  version_mismatch: boolean;
 }
 
 export interface CatalogAddon {

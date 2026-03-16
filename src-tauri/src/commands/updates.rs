@@ -43,7 +43,31 @@ pub fn compute_updates(
         if let Some((catalog_version, uid, download_url)) =
             db::lookup_by_dir_name(conn, &addon.dir_name)?
         {
-            if has_update(&addon.version, &catalog_version) {
+            // Check if we already installed this catalog version via Grimoire
+            let already_installed = if let Some(ref cv) = catalog_version {
+                matches!(
+                    db::get_installed_catalog_version(conn, &addon.dir_name),
+                    Ok(Some(ref installed_cv)) if installed_cv == cv
+                )
+            } else {
+                false
+            };
+
+            if already_installed {
+                // We installed the latest, but manifest version still differs
+                // from catalog version — this is an addon author numbering mismatch
+                if has_update(&addon.version, &catalog_version) {
+                    updates.push(AddonUpdate {
+                        dir_name: addon.dir_name.clone(),
+                        title: addon.title.clone(),
+                        installed_version: addon.version.clone(),
+                        latest_version: catalog_version.unwrap_or_default(),
+                        uid,
+                        download_url,
+                        version_mismatch: true,
+                    });
+                }
+            } else if has_update(&addon.version, &catalog_version) {
                 updates.push(AddonUpdate {
                     dir_name: addon.dir_name.clone(),
                     title: addon.title.clone(),
@@ -51,6 +75,7 @@ pub fn compute_updates(
                     latest_version: catalog_version.unwrap_or_default(),
                     uid,
                     download_url,
+                    version_mismatch: false,
                 });
             }
         }

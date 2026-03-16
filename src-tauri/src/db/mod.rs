@@ -25,6 +25,12 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS installed_versions (
+    dir_name        TEXT PRIMARY KEY,
+    uid             TEXT NOT NULL,
+    catalog_version TEXT NOT NULL
+);
 ";
 
 /// ESOUI category ID for libraries.
@@ -220,6 +226,49 @@ pub fn lookup_download_url(conn: &Connection, uid: &str) -> Result<Option<String
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Failed to lookup addon {}: {}", uid, e)),
     }
+}
+
+/// Record that an addon was installed/updated from the catalog.
+pub fn record_installed_version(
+    conn: &Connection,
+    dir_name: &str,
+    uid: &str,
+    catalog_version: &str,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO installed_versions (dir_name, uid, catalog_version)
+         VALUES (?1, ?2, ?3)",
+        params![dir_name, uid, catalog_version],
+    )
+    .map_err(|e| format!("Failed to record installed version: {}", e))?;
+    Ok(())
+}
+
+/// Get the catalog version that was last installed for a given dir_name.
+pub fn get_installed_catalog_version(
+    conn: &Connection,
+    dir_name: &str,
+) -> Result<Option<String>, String> {
+    let result = conn.query_row(
+        "SELECT catalog_version FROM installed_versions WHERE dir_name = ?1",
+        params![dir_name],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup installed version: {}", e)),
+    }
+}
+
+/// Remove the installed version record (e.g., after uninstall).
+pub fn remove_installed_version(conn: &Connection, dir_name: &str) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM installed_versions WHERE dir_name = ?1",
+        params![dir_name],
+    )
+    .map_err(|e| format!("Failed to remove installed version: {}", e))?;
+    Ok(())
 }
 
 fn row_to_catalog_addon(row: &rusqlite::Row) -> rusqlite::Result<CatalogAddon> {

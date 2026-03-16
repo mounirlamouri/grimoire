@@ -224,6 +224,9 @@ function App() {
             updates={updates}
             onCheckUpdates={() => doSync(true)}
             checking={syncing}
+            onUpdateDone={(uid) =>
+              setUpdates((prev) => prev.filter((u) => u.uid !== uid))
+            }
           />
         )}
         {activeTab === "browse" && (
@@ -244,11 +247,13 @@ function InstalledPage({
   updates,
   onCheckUpdates,
   checking,
+  onUpdateDone,
 }: {
   onError: (msg: string) => void;
   updates: AddonUpdate[];
   onCheckUpdates: () => void;
   checking: boolean;
+  onUpdateDone: (uid: string) => void;
 }) {
   const [addons, setAddons] = useState<InstalledAddon[]>([]);
   const [loading, setLoading] = useState(true);
@@ -274,6 +279,16 @@ function InstalledPage({
       loadAddons();
     } catch (err) {
       onError(`Uninstall failed: ${err}`);
+    }
+  };
+
+  const handleUpdate = async (uid: string) => {
+    try {
+      await invoke<string[]>("update_addon", { uid });
+      onUpdateDone(uid);
+      loadAddons();
+    } catch (err) {
+      onError(`Update failed: ${err}`);
     }
   };
 
@@ -305,9 +320,9 @@ function InstalledPage({
           {!loading && (
             <span className="text-xs text-[var(--text-secondary)]">
               {addonCount} addons, {libCount} libraries
-              {updates.length > 0 && (
+              {updates.filter((u) => !u.version_mismatch).length > 0 && (
                 <span className="ml-1 text-[var(--accent)]">
-                  ({updates.length} update{updates.length !== 1 ? "s" : ""})
+                  ({updates.filter((u) => !u.version_mismatch).length} update{updates.filter((u) => !u.version_mismatch).length !== 1 ? "s" : ""})
                 </span>
               )}
             </span>
@@ -335,25 +350,7 @@ function InstalledPage({
       ) : (
         <>
           {updates.length > 0 && (
-            <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3">
-              <h3 className="mb-2 text-sm font-semibold text-[var(--accent)]">
-                Updates Available ({updates.length})
-              </h3>
-              <div className="space-y-1">
-                {updates.map((u) => (
-                  <div
-                    key={u.dir_name}
-                    className="flex items-center justify-between text-xs"
-                  >
-                    <span>{u.title}</span>
-                    <span className="text-[var(--text-secondary)]">
-                      {u.installed_version} →{" "}
-                      <span className="text-[var(--teal)]">{u.latest_version}</span>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <UpdatesBanner updates={updates} onUpdate={handleUpdate} onError={onError} onDone={loadAddons} />
           )}
 
           <div className="flex items-center gap-3">
@@ -389,6 +386,7 @@ function InstalledPage({
                   addon={addon}
                   update={updateMap.get(addon.dir_name)}
                   onUninstall={handleUninstall}
+                  onUpdate={handleUpdate}
                 />
               ))}
             </div>
@@ -399,17 +397,92 @@ function InstalledPage({
   );
 }
 
+function UpdatesBanner({
+  updates,
+  onUpdate,
+  onError,
+  onDone,
+}: {
+  updates: AddonUpdate[];
+  onUpdate: (uid: string) => Promise<void>;
+  onError: (msg: string) => void;
+  onDone: () => void;
+}) {
+  const [updatingAll, setUpdatingAll] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  const realUpdates = updates.filter((u) => !u.version_mismatch);
+
+  const handleUpdateAll = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    setUpdatingAll(true);
+    setProgress(0);
+    let failed = 0;
+    for (let i = 0; i < realUpdates.length; i++) {
+      try {
+        await onUpdate(realUpdates[i].uid);
+      } catch (err) {
+        failed++;
+      }
+      setProgress(i + 1);
+    }
+    setUpdatingAll(false);
+    if (failed > 0) {
+      onError(`${failed} addon${failed !== 1 ? "s" : ""} failed to update.`);
+    }
+    onDone();
+  };
+
+  if (realUpdates.length === 0) return null;
+
+  return (
+    <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3">
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-[var(--accent)]">
+          Updates Available ({realUpdates.length})
+        </h3>
+        <button
+          onClick={handleUpdateAll}
+          disabled={updatingAll}
+          className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+        >
+          {updatingAll
+            ? `Updating ${progress}/${realUpdates.length}...`
+            : "Update All"}
+        </button>
+      </div>
+      <div className="space-y-1">
+        {realUpdates.map((u) => (
+          <div
+            key={u.dir_name}
+            className="flex items-center justify-between text-xs"
+          >
+            <span>{u.title}</span>
+            <span className="text-[var(--text-secondary)]">
+              {u.installed_version} →{" "}
+              <span className="text-[var(--teal)]">{u.latest_version}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AddonCard({
   addon,
   update,
   onUninstall,
+  onUpdate,
 }: {
   addon: InstalledAddon;
   update?: AddonUpdate;
   onUninstall: (dirName: string) => Promise<void>;
+  onUpdate: (uid: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
+  const [updating, setUpdating] = useState(false);
   const [confirmingUninstall, setConfirmingUninstall] = useState(false);
 
   const handleUninstall = (e: React.MouseEvent) => {
@@ -430,9 +503,11 @@ function AddonCard({
   return (
     <div
       className={`cursor-pointer rounded-lg border p-3 transition hover:border-[var(--teal-dim)]/40 ${
-        update
+        update && !update.version_mismatch
           ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
-          : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
+          : update?.version_mismatch
+            ? "border-yellow-500/20 bg-[var(--bg-card)]"
+            : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
       }`}
       onClick={() => setExpanded(!expanded)}
     >
@@ -445,27 +520,54 @@ function AddonCard({
                 LIB
               </span>
             )}
-            {update && (
+            {update && !update.version_mismatch && (
               <span className="rounded bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
                 UPDATE
+              </span>
+            )}
+            {update?.version_mismatch && (
+              <span
+                className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-medium text-yellow-400"
+                title="This addon reports a different version than ESOUI. You have the latest files — this is a packaging issue by the addon author."
+              >
+                VERSION MISMATCH
               </span>
             )}
           </div>
           <div className="mt-0.5 flex items-center gap-3 text-xs text-[var(--text-secondary)]">
             {addon.author && <span>by {addon.author}</span>}
             {addon.version && <span>v{addon.version}</span>}
-            {update && (
+            {update && !update.version_mismatch && (
               <span className="text-[var(--teal)]">→ v{update.latest_version}</span>
             )}
           </div>
         </div>
-        <button
-          onClick={handleUninstall}
-          disabled={uninstalling}
-          className="ml-3 shrink-0 rounded border border-red-500/30 px-3 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
-        >
-          {uninstalling ? "Removing..." : "Uninstall"}
-        </button>
+        <div className="ml-3 flex shrink-0 gap-2">
+          {update && !update.version_mismatch && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                setUpdating(true);
+                try {
+                  await onUpdate(update.uid);
+                } finally {
+                  setUpdating(false);
+                }
+              }}
+              disabled={updating}
+              className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              {updating ? "Updating..." : "Update"}
+            </button>
+          )}
+          <button
+            onClick={handleUninstall}
+            disabled={uninstalling}
+            className="rounded border border-red-500/30 px-3 py-1 text-xs font-medium text-red-400 transition hover:bg-red-500/10 disabled:opacity-50"
+          >
+            {uninstalling ? "Removing..." : "Uninstall"}
+          </button>
+        </div>
       </div>
 
       {expanded && (
@@ -492,6 +594,16 @@ function AddonCard({
                   )
                   .join(", ")}
               </span>
+            </div>
+          )}
+          {update?.version_mismatch && (
+            <div className="rounded border border-yellow-500/20 bg-yellow-500/5 px-3 py-2">
+              <p className="text-xs text-yellow-400">
+                Version mismatch: this addon reports v{update.installed_version} but
+                ESOUI lists v{update.latest_version}. This can happen when the addon author
+                uses a different versioning scheme on ESOUI than in the addon files, or forgot
+                to update the version in the manifest. You have the latest version.
+              </p>
             </div>
           )}
         </div>

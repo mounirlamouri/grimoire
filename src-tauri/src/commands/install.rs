@@ -1,7 +1,10 @@
 use crate::addon::installer;
 use crate::config::{paths, settings};
+use crate::db;
 use crate::esoui::api::EsoUiClient;
+use rusqlite::Connection;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -54,7 +57,9 @@ pub async fn install_addon(app_handle: tauri::AppHandle, uid: String) -> Result<
     );
 
     // Download the ZIP
+    log::info!("Downloading addon {} from {}", uid, download_url);
     let zip_bytes = client.download_addon(download_url).await?;
+    log::info!("Downloaded {} bytes for addon {}", zip_bytes.len(), uid);
 
     let _ = app_handle.emit(
         "install-progress",
@@ -65,7 +70,18 @@ pub async fn install_addon(app_handle: tauri::AppHandle, uid: String) -> Result<
     );
 
     // Extract to AddOns folder
+    log::info!("Extracting addon {} to {}", uid, addon_path.display());
     let installed_dirs = installer::install_from_zip(&zip_bytes, &addon_path)?;
+    log::info!("Extracted addon {} dirs: {:?}", uid, installed_dirs);
+
+    // Record installed version so update checking knows we have the latest
+    let catalog_version = details.ui_version.as_deref().unwrap_or("");
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    if let Ok(conn) = db_state.lock() {
+        for dir in &installed_dirs {
+            let _ = db::record_installed_version(&conn, dir, &uid, catalog_version);
+        }
+    }
 
     let _ = app_handle.emit(
         "install-progress",
@@ -94,5 +110,13 @@ pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result
         .or_else(|| paths::detect_addon_path())
         .ok_or("ESO addon path not configured. Go to Settings to set it.")?;
 
-    installer::uninstall_addon(&addon_path, &dir_name)
+    installer::uninstall_addon(&addon_path, &dir_name)?;
+
+    // Clean up installed version record
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    if let Ok(conn) = db_state.lock() {
+        let _ = db::remove_installed_version(&conn, &dir_name);
+    }
+
+    Ok(())
 }

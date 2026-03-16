@@ -91,12 +91,19 @@ impl EsoUiClient {
 
     /// Download an addon ZIP file and return the bytes.
     pub async fn download_addon(&self, download_url: &str) -> Result<Vec<u8>, String> {
-        let bytes = self
+        let response = self
             .client
             .get(download_url)
             .send()
             .await
-            .map_err(|e| format!("Download failed: {}", e))?
+            .map_err(|e| format!("Download failed: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("Download failed with HTTP {}", status.as_u16()));
+        }
+
+        let bytes = response
             .bytes()
             .await
             .map_err(|e| format!("Failed to read download: {}", e))?;
