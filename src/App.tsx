@@ -110,7 +110,12 @@ function App() {
       try {
         await invoke<number>("sync_catalog");
       } catch (err) {
-        setGlobalError(`Catalog sync failed: ${err}`);
+        // Only show error for user-initiated syncs (with modal), not background ones
+        if (showModal) {
+          setGlobalError(`Catalog sync failed: ${err}`);
+        } else {
+          console.warn("Background catalog sync failed:", err);
+        }
       } finally {
         setSyncing(false);
         if (showModal) {
