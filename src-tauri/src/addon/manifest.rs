@@ -73,7 +73,8 @@ pub fn scan_installed_addons(addons_path: &Path) -> Result<Vec<InstalledAddon>, 
 }
 
 fn parse_manifest(dir_name: &str, path: &Path) -> Result<InstalledAddon, String> {
-    let content = fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let bytes = fs::read(path).map_err(|e| e.to_string())?;
+    let content = String::from_utf8_lossy(&bytes);
 
     let mut addon = InstalledAddon {
         dir_name: dir_name.to_string(),

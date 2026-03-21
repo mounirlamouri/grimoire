@@ -37,6 +37,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::addons::get_installed_addons,
             commands::addons::find_orphaned_libraries,
+            commands::addons::check_catalog_availability,
             commands::catalog::sync_catalog,
             commands::catalog::get_catalog_status,
             commands::catalog::search_addons,
@@ -48,6 +49,7 @@ pub fn run() {
             commands::install::install_addon,
             commands::install::update_addon,
             commands::install::uninstall_addon,
+            commands::install::install_missing_deps,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -370,6 +370,35 @@ function InstalledPage({
     }
   };
 
+  const handleFixDeps = async (dirNames: string[]) => {
+    try {
+      const result = await invoke<InstallResult>("install_missing_deps", { dirNames });
+      loadAddons();
+      const errors: string[] = [];
+      if (result.missing_deps.length > 0) {
+        errors.push(`Could not be found on ESOUI: ${result.missing_deps.join(", ")}`);
+      }
+      if (result.failed_deps.length > 0) {
+        errors.push(`Failed to install: ${result.failed_deps.map((d) => `${d.dir_name} (${d.error})`).join(", ")}`);
+      }
+      if (errors.length > 0) {
+        if (result.auto_installed_deps.length > 0) {
+          errors.push(`Automatically installed: ${result.auto_installed_deps.map((d) => d.name).join(", ")}`);
+        }
+        onError(`Some dependencies could not be installed.\n\n${errors.join("\n\n")}`);
+      } else {
+        onSuccess({
+          message: "All missing dependencies were installed successfully.",
+          details: result.auto_installed_deps.length > 0
+            ? `Installed: ${result.auto_installed_deps.map((d) => d.name).join(", ")}`
+            : null,
+        });
+      }
+    } catch (err) {
+      onError(`Failed to install dependencies: ${err}`);
+    }
+  };
+
   const scanOrphanedLibs = async () => {
     setLoadingOrphans(true);
     try {
@@ -414,6 +443,46 @@ function InstalledPage({
   }, []);
 
   const updateMap = new Map(updates.map((u) => [u.dir_name, u]));
+
+  // Compute missing dependencies and check catalog availability
+  const [missingDepsMap, setMissingDepsMap] = useState<Map<string, { fixable: string[]; unavailable: string[] }>>(new Map());
+  useEffect(() => {
+    const installedDirNames = new Set(addons.map((a) => a.dir_name));
+    const allMissing = new Map<string, string[]>();
+    const allMissingNames = new Set<string>();
+    for (const addon of addons) {
+      const missing = addon.depends_on
+        .map((d) => d.name)
+        .filter((name) => !installedDirNames.has(name));
+      if (missing.length > 0) {
+        allMissing.set(addon.dir_name, missing);
+        missing.forEach((n) => allMissingNames.add(n));
+      }
+    }
+    if (allMissingNames.size === 0) {
+      setMissingDepsMap(new Map());
+      return;
+    }
+    invoke<string[]>("check_catalog_availability", { dirNames: [...allMissingNames] })
+      .then((available) => {
+        const availableSet = new Set(available);
+        const result = new Map<string, { fixable: string[]; unavailable: string[] }>();
+        for (const [dirName, missing] of allMissing) {
+          const fixable = missing.filter((n) => availableSet.has(n));
+          const unavailable = missing.filter((n) => !availableSet.has(n));
+          result.set(dirName, { fixable, unavailable });
+        }
+        setMissingDepsMap(result);
+      })
+      .catch(() => {
+        // Fallback: treat all as unavailable if catalog check fails
+        const result = new Map<string, { fixable: string[]; unavailable: string[] }>();
+        for (const [dirName, missing] of allMissing) {
+          result.set(dirName, { fixable: [], unavailable: missing });
+        }
+        setMissingDepsMap(result);
+      });
+  }, [addons]);
 
   const filtered = addons.filter((addon) => {
     if (!showLibraries && addon.is_library) return false;
@@ -518,8 +587,10 @@ function InstalledPage({
                   key={addon.dir_name}
                   addon={addon}
                   update={updateMap.get(addon.dir_name)}
+                  missingDeps={missingDepsMap.get(addon.dir_name) ?? undefined}
                   onUninstall={handleUninstall}
                   onUpdate={handleUpdate}
+                  onFixDeps={handleFixDeps}
                 />
               ))}
             </div>
@@ -698,17 +769,22 @@ function UpdatesBanner({
 function AddonCard({
   addon,
   update,
+  missingDeps,
   onUninstall,
   onUpdate,
+  onFixDeps,
 }: {
   addon: InstalledAddon;
   update?: AddonUpdate;
+  missingDeps?: { fixable: string[]; unavailable: string[] };
   onUninstall: (dirName: string) => Promise<void>;
   onUpdate: (uid: string) => Promise<void>;
+  onFixDeps: (dirNames: string[]) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [fixing, setFixing] = useState(false);
   const [confirmingUninstall, setConfirmingUninstall] = useState(false);
 
   const handleUninstall = (e: React.MouseEvent) => {
@@ -729,11 +805,13 @@ function AddonCard({
   return (
     <div
       className={`cursor-pointer rounded-lg border p-3 transition hover:border-[var(--teal-dim)]/40 ${
-        update && !update.version_mismatch
-          ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
-          : update?.version_mismatch
-            ? "border-yellow-500/20 bg-[var(--bg-card)]"
-            : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
+        missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0)
+          ? "border-red-500/20 bg-[var(--bg-card)]"
+          : update && !update.version_mismatch
+            ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
+            : update?.version_mismatch
+              ? "border-yellow-500/20 bg-[var(--bg-card)]"
+              : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
       }`}
       onClick={() => setExpanded(!expanded)}
     >
@@ -749,6 +827,14 @@ function AddonCard({
             {update && !update.version_mismatch && (
               <span className="rounded bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
                 UPDATE
+              </span>
+            )}
+            {missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0) && (
+              <span
+                className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
+                title={`Missing dependencies: ${[...missingDeps.fixable, ...missingDeps.unavailable].join(", ")}`}
+              >
+                MISSING DEPS
               </span>
             )}
             {update?.version_mismatch && (
@@ -786,6 +872,23 @@ function AddonCard({
               {updating ? "Updating..." : "Update"}
             </button>
           )}
+          {missingDeps && missingDeps.fixable.length > 0 && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                setFixing(true);
+                try {
+                  await onFixDeps(missingDeps.fixable);
+                } finally {
+                  setFixing(false);
+                }
+              }}
+              disabled={fixing}
+              className="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
+            >
+              {fixing ? "Fixing..." : "Fix"}
+            </button>
+          )}
           <button
             onClick={handleUninstall}
             disabled={uninstalling}
@@ -820,6 +923,21 @@ function AddonCard({
                   )
                   .join(", ")}
               </span>
+            </div>
+          )}
+          {missingDeps && missingDeps.fixable.length > 0 && (
+            <div className="rounded border border-red-500/20 bg-red-500/5 px-3 py-2">
+              <p className="text-xs text-red-400">
+                Missing dependencies: {missingDeps.fixable.join(", ")}. This addon may not function properly.
+                Click Fix to install them automatically.
+              </p>
+            </div>
+          )}
+          {missingDeps && missingDeps.unavailable.length > 0 && (
+            <div className="rounded border border-red-500/20 bg-red-500/5 px-3 py-2">
+              <p className="text-xs text-red-400">
+                Missing dependencies not available on ESOUI: {missingDeps.unavailable.join(", ")}. These may have been removed or renamed.
+              </p>
             </div>
           )}
           {update?.version_mismatch && (

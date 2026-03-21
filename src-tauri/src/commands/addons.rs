@@ -1,7 +1,11 @@
 use crate::addon::manifest::InstalledAddon;
 use crate::config::{paths, settings};
+use crate::db;
+use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::Manager;
 
 #[tauri::command]
 pub fn get_installed_addons(app_handle: tauri::AppHandle) -> Result<Vec<InstalledAddon>, String> {
@@ -46,4 +50,23 @@ pub fn find_orphaned_libraries(app_handle: tauri::AppHandle) -> Result<Vec<Insta
         .collect();
 
     Ok(orphaned)
+}
+
+/// Check which dir_names from a list are available in the ESOUI catalog.
+/// Returns only the dir_names that were found.
+#[tauri::command]
+pub fn check_catalog_availability(
+    app_handle: tauri::AppHandle,
+    dir_names: Vec<String>,
+) -> Result<Vec<String>, String> {
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
+
+    let mut available = Vec::new();
+    for name in &dir_names {
+        if let Ok(Some(_)) = db::lookup_by_dir_name(&conn, name) {
+            available.push(name.clone());
+        }
+    }
+    Ok(available)
 }

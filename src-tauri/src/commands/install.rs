@@ -237,6 +237,57 @@ pub async fn update_addon(
     install_addon(app_handle, uid).await
 }
 
+/// Install missing dependencies for an addon, given a list of dir_names.
+/// Looks up each dir_name in the catalog to find its UID, then installs it.
+#[tauri::command]
+pub async fn install_missing_deps(
+    app_handle: tauri::AppHandle,
+    dir_names: Vec<String>,
+) -> Result<InstallResult, String> {
+    let mut result = InstallResult {
+        installed_dirs: Vec::new(),
+        auto_installed_deps: Vec::new(),
+        missing_deps: Vec::new(),
+        failed_deps: Vec::new(),
+    };
+
+    for dir_name in &dir_names {
+        // Look up UID in catalog
+        let dep_uid = {
+            let db_state = app_handle.state::<Mutex<Connection>>();
+            let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
+            db::lookup_by_dir_name(&conn, dir_name)?
+                .map(|(_, uid, _)| uid)
+        };
+
+        let Some(uid) = dep_uid else {
+            result.missing_deps.push(dir_name.clone());
+            continue;
+        };
+
+        match install_addon(app_handle.clone(), uid).await {
+            Ok(sub) => {
+                result.installed_dirs.extend(sub.installed_dirs);
+                result.auto_installed_deps.push(AutoInstalledDep {
+                    dir_name: dir_name.clone(),
+                    name: dir_name.clone(),
+                });
+                result.auto_installed_deps.extend(sub.auto_installed_deps);
+                result.missing_deps.extend(sub.missing_deps);
+                result.failed_deps.extend(sub.failed_deps);
+            }
+            Err(e) => {
+                result.failed_deps.push(FailedDep {
+                    dir_name: dir_name.clone(),
+                    error: e,
+                });
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Uninstall an addon by removing its directory from the AddOns folder.
 #[tauri::command]
 pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result<(), String> {
