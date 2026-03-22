@@ -22,6 +22,8 @@ pub struct GameConfig {
     pub api_feeds: ApiFeeds,
 }
 
+// Mirrors the MMOUI API response — fields kept for schema completeness.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ApiFeeds {
@@ -30,6 +32,8 @@ pub struct ApiFeeds {
     pub category_list: String,
 }
 
+// Mirrors the MMOUI API response — fields kept for schema completeness.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct AddonListItem {
     #[serde(rename = "UID")]
@@ -82,6 +86,8 @@ pub struct AddonUpdate {
     pub version_mismatch: bool,
 }
 
+// Mirrors the MMOUI API response — fields kept for schema completeness.
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct AddonDetails {
