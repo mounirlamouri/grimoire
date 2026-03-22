@@ -110,3 +110,55 @@ impl EsoUiClient {
         Ok(bytes.to_vec())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_client_not_initialized() {
+        let client = EsoUiClient::new();
+        assert!(client.api_feeds.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_without_init_fails() {
+        let client = EsoUiClient::new();
+        let result = client.fetch_file_list().await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[tokio::test]
+    async fn test_fetch_details_without_init_fails() {
+        let client = EsoUiClient::new();
+        let result = client.fetch_addon_details("123").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("not initialized"));
+    }
+
+    #[ignore] // Requires network — run with: cargo test -- --ignored
+    #[tokio::test]
+    async fn test_init_real_api() {
+        let mut client = EsoUiClient::new();
+        client.init().await.unwrap();
+        assert!(client.api_feeds.is_some());
+
+        let feeds = client.feeds().unwrap();
+        assert!(!feeds.file_list.is_empty());
+        assert!(!feeds.file_details.is_empty());
+    }
+
+    #[ignore] // Requires network — run with: cargo test -- --ignored
+    #[tokio::test]
+    async fn test_fetch_file_list_real() {
+        let mut client = EsoUiClient::new();
+        client.init().await.unwrap();
+
+        let list = client.fetch_file_list().await.unwrap();
+        assert!(!list.is_empty(), "Catalog should have addons");
+        // Spot check first entry has required fields
+        assert!(!list[0].uid.is_empty());
+        assert!(!list[0].ui_name.is_empty());
+    }
+}

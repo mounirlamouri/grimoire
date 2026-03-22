@@ -335,3 +335,156 @@ fn test_no_updates_when_current() {
 
     assert!(updates.is_empty(), "No updates should be found when versions match");
 }
+
+// ── Test 7: Orphaned library detection ─────────────────────────────
+
+#[test]
+fn test_orphaned_library_detection() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Install a regular addon that depends on LibA
+    let addon_zip = create_test_zip(&[(
+        "MyAddon/MyAddon.txt",
+        b"## Title: My Addon\n## DependsOn: LibA\n",
+    )]);
+    installer::install_from_zip(&addon_zip, dir.path()).unwrap();
+
+    // Install LibA (depended upon) and LibB (orphaned — nobody depends on it)
+    let lib_a_zip = create_test_zip(&[(
+        "LibA/LibA.txt",
+        b"## Title: Library A\n## IsLibrary: true\n",
+    )]);
+    installer::install_from_zip(&lib_a_zip, dir.path()).unwrap();
+
+    let lib_b_zip = create_test_zip(&[(
+        "LibB/LibB.txt",
+        b"## Title: Library B\n## IsLibrary: true\n",
+    )]);
+    installer::install_from_zip(&lib_b_zip, dir.path()).unwrap();
+
+    // Scan all addons
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 3);
+
+    // Replicate the orphaned library algorithm from commands/addons.rs
+    let mut needed: HashSet<String> = HashSet::new();
+    for addon in &addons {
+        for dep in &addon.depends_on {
+            needed.insert(dep.name.clone());
+        }
+        for dep in &addon.optional_depends_on {
+            needed.insert(dep.name.clone());
+        }
+    }
+
+    let orphaned: Vec<_> = addons
+        .iter()
+        .filter(|a| a.is_library && !needed.contains(&a.dir_name))
+        .collect();
+
+    // LibB is orphaned (no addon depends on it), LibA is not (MyAddon depends on it)
+    assert_eq!(orphaned.len(), 1);
+    assert_eq!(orphaned[0].dir_name, "LibB");
+}
+
+// ── Test 8: Orphaned detection with transitive deps ────────────────
+
+#[test]
+fn test_orphaned_library_with_transitive_deps() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // MyAddon depends on LibA, LibA depends on LibC
+    let addon_zip = create_test_zip(&[(
+        "MyAddon/MyAddon.txt",
+        b"## Title: My Addon\n## DependsOn: LibA\n",
+    )]);
+    installer::install_from_zip(&addon_zip, dir.path()).unwrap();
+
+    let lib_a_zip = create_test_zip(&[(
+        "LibA/LibA.txt",
+        b"## Title: Library A\n## IsLibrary: true\n## DependsOn: LibC\n",
+    )]);
+    installer::install_from_zip(&lib_a_zip, dir.path()).unwrap();
+
+    let lib_c_zip = create_test_zip(&[(
+        "LibC/LibC.txt",
+        b"## Title: Library C\n## IsLibrary: true\n",
+    )]);
+    installer::install_from_zip(&lib_c_zip, dir.path()).unwrap();
+
+    // LibOrphan is not depended on by anyone
+    let lib_orphan_zip = create_test_zip(&[(
+        "LibOrphan/LibOrphan.txt",
+        b"## Title: Orphan Lib\n## IsLibrary: true\n",
+    )]);
+    installer::install_from_zip(&lib_orphan_zip, dir.path()).unwrap();
+
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 4);
+
+    let mut needed: HashSet<String> = HashSet::new();
+    for addon in &addons {
+        for dep in &addon.depends_on {
+            needed.insert(dep.name.clone());
+        }
+        for dep in &addon.optional_depends_on {
+            needed.insert(dep.name.clone());
+        }
+    }
+
+    let orphaned: Vec<_> = addons
+        .iter()
+        .filter(|a| a.is_library && !needed.contains(&a.dir_name))
+        .collect();
+
+    // Only LibOrphan is orphaned; LibA is needed by MyAddon, LibC is needed by LibA
+    assert_eq!(orphaned.len(), 1);
+    assert_eq!(orphaned[0].dir_name, "LibOrphan");
+}
+
+// ── Test 9: Multiple addons with updates at different states ───────
+
+#[test]
+fn test_mixed_update_states() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // AddonA: has update (1.0 → 2.0)
+    let a_zip = create_test_zip(&[(
+        "AddonA/AddonA.txt",
+        b"## Title: Addon A\n## Version: 1.0\n",
+    )]);
+    installer::install_from_zip(&a_zip, dir.path()).unwrap();
+
+    // AddonB: up to date (3.0 = 3.0)
+    let b_zip = create_test_zip(&[(
+        "AddonB/AddonB.txt",
+        b"## Title: Addon B\n## Version: 3.0\n",
+    )]);
+    installer::install_from_zip(&b_zip, dir.path()).unwrap();
+
+    // AddonC: not in catalog (no update info)
+    let c_zip = create_test_zip(&[(
+        "AddonC/AddonC.txt",
+        b"## Title: Addon C\n## Version: 1.0\n",
+    )]);
+    installer::install_from_zip(&c_zip, dir.path()).unwrap();
+
+    let rows = vec![
+        catalog_row("1", "Addon A", Some("2.0"), 100, Some("AddonA"), None, None),
+        catalog_row("2", "Addon B", Some("3.0"), 200, Some("AddonB"), None, None),
+        // No AddonC in catalog
+    ];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    let installed = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(installed.len(), 3);
+
+    let updates = compute_updates(&conn, &installed).unwrap();
+
+    // Only AddonA should have an update
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].dir_name, "AddonA");
+    assert_eq!(updates[0].installed_version, "1.0");
+    assert_eq!(updates[0].latest_version, "2.0");
+}
