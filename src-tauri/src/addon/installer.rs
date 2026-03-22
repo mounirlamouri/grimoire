@@ -89,3 +89,177 @@ pub fn uninstall_addon(addons_path: &Path, dir_name: &str) -> Result<(), String>
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    /// Build a ZIP archive in memory from a list of (path, contents) entries.
+    fn create_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut writer = zip::write::ZipWriter::new(io::Cursor::new(&mut buf));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+
+            for (path, contents) in entries {
+                if path.ends_with('/') {
+                    writer.add_directory(*path, options).unwrap();
+                } else {
+                    writer.start_file(*path, options).unwrap();
+                    writer.write_all(contents).unwrap();
+                }
+            }
+            writer.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn test_install_basic_addon() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = create_test_zip(&[
+            ("MyAddon/", b""),
+            ("MyAddon/MyAddon.txt", b"## Title: My Addon\n"),
+            ("MyAddon/init.lua", b"-- hello\n"),
+        ]);
+
+        let top_dirs = install_from_zip(&zip, dir.path()).unwrap();
+        assert_eq!(top_dirs, vec!["MyAddon"]);
+        assert!(dir.path().join("MyAddon/MyAddon.txt").exists());
+        assert!(dir.path().join("MyAddon/init.lua").exists());
+    }
+
+    #[test]
+    fn test_install_multiple_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = create_test_zip(&[
+            ("AddonA/file.lua", b"a"),
+            ("AddonB/file.lua", b"b"),
+        ]);
+
+        let top_dirs = install_from_zip(&zip, dir.path()).unwrap();
+        assert_eq!(top_dirs.len(), 2);
+        assert!(top_dirs.contains(&"AddonA".to_string()));
+        assert!(top_dirs.contains(&"AddonB".to_string()));
+    }
+
+    #[test]
+    fn test_install_nested_subdirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = create_test_zip(&[
+            ("MyAddon/sub/deep/file.lua", b"nested"),
+        ]);
+
+        install_from_zip(&zip, dir.path()).unwrap();
+        assert!(dir.path().join("MyAddon/sub/deep/file.lua").exists());
+    }
+
+    #[test]
+    fn test_install_overwrites_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let addon_dir = dir.path().join("MyAddon");
+        fs::create_dir(&addon_dir).unwrap();
+        fs::write(addon_dir.join("old.lua"), "old content").unwrap();
+
+        let zip = create_test_zip(&[
+            ("MyAddon/old.lua", b"new content"),
+        ]);
+
+        install_from_zip(&zip, dir.path()).unwrap();
+        let content = fs::read_to_string(dir.path().join("MyAddon/old.lua")).unwrap();
+        assert_eq!(content, "new content");
+    }
+
+    #[test]
+    fn test_install_path_traversal_rejected() {
+        // Build a ZIP with a "../evil.txt" entry by creating a normal ZIP
+        // and patching the filename in the raw bytes.
+        let dir = tempfile::tempdir().unwrap();
+
+        // Create a ZIP with a placeholder filename of the same length as "../evil.txt"
+        let placeholder = "XXXevil.txt"; // same length as "../evil.txt"
+        let traversal = "../evil.txt";
+        assert_eq!(placeholder.len(), traversal.len());
+
+        let zip = create_test_zip(&[(placeholder, b"malicious")]);
+
+        // Patch the raw ZIP bytes: replace placeholder with traversal path
+        // ZIP format stores filenames in both local file header and central directory
+        let mut patched = zip.clone();
+        let placeholder_bytes = placeholder.as_bytes();
+        let traversal_bytes = traversal.as_bytes();
+        for i in 0..patched.len() - placeholder_bytes.len() {
+            if &patched[i..i + placeholder_bytes.len()] == placeholder_bytes {
+                patched[i..i + traversal_bytes.len()].copy_from_slice(traversal_bytes);
+            }
+        }
+
+        let result = install_from_zip(&patched, dir.path());
+        // Should be rejected by enclosed_name() returning None
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("Invalid file path") || err.contains("path traversal"),
+            "Expected path traversal error, got: {}",
+            err
+        );
+        // Verify no file was written outside the target
+        assert!(!dir.path().parent().unwrap().join("evil.txt").exists());
+    }
+
+    #[test]
+    fn test_install_empty_zip() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip = create_test_zip(&[]);
+
+        let top_dirs = install_from_zip(&zip, dir.path()).unwrap();
+        assert!(top_dirs.is_empty());
+    }
+
+    #[test]
+    fn test_install_invalid_zip() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = install_from_zip(b"not a zip file", dir.path());
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read ZIP archive"));
+    }
+
+    // ── uninstall_addon ────────────────────────────────────────────
+
+    #[test]
+    fn test_uninstall_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let addon_dir = dir.path().join("MyAddon");
+        fs::create_dir(&addon_dir).unwrap();
+        fs::write(addon_dir.join("file.lua"), "content").unwrap();
+
+        uninstall_addon(dir.path(), "MyAddon").unwrap();
+        assert!(!addon_dir.exists());
+    }
+
+    #[test]
+    fn test_uninstall_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = uninstall_addon(dir.path(), "DoesNotExist");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_uninstall_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        // Create a sibling directory that path traversal might try to delete
+        let sibling = dir.path().join("sibling");
+        fs::create_dir(&sibling).unwrap();
+
+        let addons_dir = dir.path().join("addons");
+        fs::create_dir(&addons_dir).unwrap();
+
+        let result = uninstall_addon(&addons_dir, "../sibling");
+        // Should fail — either "not found" (canonicalize fails) or "path traversal"
+        assert!(result.is_err());
+        // Sibling should still exist
+        assert!(sibling.exists());
+    }
+}

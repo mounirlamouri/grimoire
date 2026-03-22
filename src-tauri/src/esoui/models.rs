@@ -102,3 +102,140 @@ pub struct AddonDetails {
     #[serde(rename = "UIDownloadTotal")]
     pub ui_download_total: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_deserialize_global_config() {
+        let json = r#"{
+            "GAMES": [
+                { "GameID": "ESO", "GameConfig": "https://example.com/eso.json" },
+                { "GameID": "WOW", "GameConfig": "https://example.com/wow.json" }
+            ]
+        }"#;
+
+        let config: GlobalConfigResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(config.games.len(), 2);
+        assert_eq!(config.games[0].game_id, "ESO");
+        assert_eq!(config.games[0].game_config, "https://example.com/eso.json");
+    }
+
+    #[test]
+    fn test_deserialize_game_config() {
+        let json = r#"{
+            "APIFeeds": {
+                "FileList": "https://example.com/filelist.json",
+                "FileDetails": "https://example.com/details/",
+                "CategoryList": "https://example.com/categories.json"
+            }
+        }"#;
+
+        let config: GameConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.api_feeds.file_list, "https://example.com/filelist.json");
+        assert_eq!(config.api_feeds.file_details, "https://example.com/details/");
+    }
+
+    #[test]
+    fn test_deserialize_addon_list_item_full() {
+        let json = r#"{
+            "UID": "123",
+            "UIName": "Test Addon",
+            "UIVersion": "2.0 r41",
+            "UIDate": 1700000000000,
+            "UIDownloadTotal": "50000",
+            "UIFavoriteTotal": "100",
+            "UIDir": ["TestAddon", "TestAddonLib"],
+            "UICATID": "53",
+            "UIDownload": "https://example.com/test.zip",
+            "UIAuthorName": "TestAuthor",
+            "UIFileInfoURL": "https://example.com/info",
+            "UIDownloadMonthly": "1000",
+            "UICompatibility": [{"version": "101047", "name": "U43"}],
+            "UISiblings": null,
+            "UIDonationLink": null,
+            "UIIMG_Thumbs": ["https://example.com/thumb.png"],
+            "UIIMGs": ["https://example.com/full.png"]
+        }"#;
+
+        let item: AddonListItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.uid, "123");
+        assert_eq!(item.ui_name, "Test Addon");
+        assert_eq!(item.ui_version, Some("2.0 r41".to_string()));
+        assert_eq!(item.ui_dir, Some(vec!["TestAddon".to_string(), "TestAddonLib".to_string()]));
+        assert_eq!(item.ui_cat_id, Some("53".to_string()));
+        assert_eq!(item.ui_author_name, Some("TestAuthor".to_string()));
+        assert_eq!(item.ui_download_monthly, Some("1000".to_string()));
+    }
+
+    #[test]
+    fn test_deserialize_addon_list_item_nulls() {
+        let json = r#"{
+            "UID": "456",
+            "UIName": "Minimal Addon",
+            "UIVersion": null,
+            "UIDate": null,
+            "UIDownloadTotal": null,
+            "UIFavoriteTotal": null,
+            "UIDir": null,
+            "UICATID": null,
+            "UIDownload": null,
+            "UIAuthorName": null,
+            "UIFileInfoURL": null,
+            "UIDownloadMonthly": null,
+            "UICompatibility": null,
+            "UISiblings": null,
+            "UIDonationLink": null,
+            "UIIMG_Thumbs": null,
+            "UIIMGs": null
+        }"#;
+
+        let item: AddonListItem = serde_json::from_str(json).unwrap();
+        assert_eq!(item.uid, "456");
+        assert_eq!(item.ui_name, "Minimal Addon");
+        assert_eq!(item.ui_version, None);
+        assert_eq!(item.ui_dir, None);
+        assert_eq!(item.ui_download, None);
+    }
+
+    #[test]
+    fn test_ui_date_as_number() {
+        let json = r#"{
+            "UID": "1",
+            "UIName": "A",
+            "UIDate": 1700000000000,
+            "UIDownloadTotal": null, "UIFavoriteTotal": null,
+            "UIVersion": null, "UIDir": null, "UICATID": null,
+            "UIDownload": null, "UIAuthorName": null, "UIFileInfoURL": null,
+            "UIDownloadMonthly": null, "UICompatibility": null,
+            "UISiblings": null, "UIDonationLink": null,
+            "UIIMG_Thumbs": null, "UIIMGs": null
+        }"#;
+
+        let item: AddonListItem = serde_json::from_str(json).unwrap();
+        assert!(item.ui_date.is_some());
+        assert!(item.ui_date.unwrap().is_number());
+    }
+
+    #[test]
+    fn test_deserialize_addon_details() {
+        let json = r#"[{
+            "UID": "789",
+            "UIName": "Detail Addon",
+            "UIVersion": "3.0",
+            "UIAuthorName": "DetailAuthor",
+            "UIDescription": "A detailed description",
+            "UIDownload": "https://example.com/detail.zip",
+            "UIDir": "DetailAddon",
+            "UIDownloadTotal": "25000"
+        }]"#;
+
+        let details: Vec<AddonDetails> = serde_json::from_str(json).unwrap();
+        assert_eq!(details.len(), 1);
+        assert_eq!(details[0].uid, "789");
+        assert_eq!(details[0].ui_name, "Detail Addon");
+        assert_eq!(details[0].ui_version, Some("3.0".to_string()));
+        assert_eq!(details[0].ui_dir, Some("DetailAddon".to_string()));
+    }
+}

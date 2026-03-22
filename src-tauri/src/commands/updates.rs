@@ -124,3 +124,90 @@ fn parse_version(version: &str) -> Option<Vec<u32>> {
         Some(parts)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── parse_version ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_version_semver() {
+        assert_eq!(parse_version("1.2.3"), Some(vec![1, 2, 3]));
+    }
+
+    #[test]
+    fn test_parse_version_single() {
+        assert_eq!(parse_version("42"), Some(vec![42]));
+    }
+
+    #[test]
+    fn test_parse_version_non_numeric_parts() {
+        // "2.0 r41" splits on '.', "0 r41" fails parse, so only [2]
+        assert_eq!(parse_version("2.0 r41"), Some(vec![2]));
+    }
+
+    #[test]
+    fn test_parse_version_empty() {
+        assert_eq!(parse_version(""), None);
+    }
+
+    #[test]
+    fn test_parse_version_no_numbers() {
+        assert_eq!(parse_version("beta"), None);
+    }
+
+    #[test]
+    fn test_parse_version_four_parts() {
+        assert_eq!(parse_version("3.8.3.1"), Some(vec![3, 8, 3, 1]));
+    }
+
+    // ── has_update ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_has_update_same_version() {
+        assert!(!has_update("1.2.3", &Some("1.2.3".into())));
+    }
+
+    #[test]
+    fn test_has_update_newer_catalog() {
+        assert!(has_update("1.2.3", &Some("1.2.4".into())));
+    }
+
+    #[test]
+    fn test_has_update_older_catalog() {
+        assert!(!has_update("1.2.4", &Some("1.2.3".into())));
+    }
+
+    #[test]
+    fn test_has_update_none_catalog() {
+        assert!(!has_update("1.0", &None));
+    }
+
+    #[test]
+    fn test_has_update_empty_catalog() {
+        assert!(!has_update("1.0", &Some("".into())));
+    }
+
+    #[test]
+    fn test_has_update_empty_installed() {
+        assert!(!has_update("", &Some("1.0".into())));
+    }
+
+    #[test]
+    fn test_has_update_non_semver_differ() {
+        // Both fail numeric parse → fallback to string inequality → true
+        assert!(has_update("alpha", &Some("beta".into())));
+    }
+
+    #[test]
+    fn test_has_update_major_bump() {
+        assert!(has_update("1.0.0", &Some("2.0.0".into())));
+    }
+
+    #[test]
+    fn test_has_update_catalog_shorter_version() {
+        // installed "1.2.3" vs catalog "1.2" — [1,2] < [1,2,3] → no update
+        assert!(!has_update("1.2.3", &Some("1.2".into())));
+    }
+}
