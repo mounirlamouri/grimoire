@@ -1,0 +1,337 @@
+//! Integration tests that exercise multiple modules working together.
+
+use grimoire_lib::addon::{installer, manifest};
+use grimoire_lib::commands::updates::compute_updates;
+use grimoire_lib::db;
+use grimoire_lib::resolver::find_missing_dependencies;
+use rusqlite::Connection;
+use std::collections::HashSet;
+use std::fs;
+use std::io::Write;
+
+/// Build a ZIP archive in memory from a list of (path, contents) entries.
+fn create_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    let mut buf = Vec::new();
+    {
+        let mut writer = zip::write::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+
+        for (path, contents) in entries {
+            if path.ends_with('/') {
+                writer.add_directory(*path, options).unwrap();
+            } else {
+                writer.start_file(*path, options).unwrap();
+                writer.write_all(contents).unwrap();
+            }
+        }
+        writer.finish().unwrap();
+    }
+    buf
+}
+
+/// Create an in-memory database with schema applied.
+fn test_db() -> Connection {
+    let conn = Connection::open_in_memory().unwrap();
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS catalog_addons (
+            uid             TEXT PRIMARY KEY,
+            name            TEXT NOT NULL,
+            version         TEXT,
+            date            INTEGER,
+            downloads       INTEGER DEFAULT 0,
+            favorites       INTEGER DEFAULT 0,
+            downloads_monthly INTEGER DEFAULT 0,
+            directories     TEXT,
+            category_id     TEXT,
+            author          TEXT,
+            download_url    TEXT,
+            file_info_url   TEXT
+        );
+        CREATE TABLE IF NOT EXISTS catalog_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS installed_versions (
+            dir_name        TEXT PRIMARY KEY,
+            uid             TEXT NOT NULL,
+            catalog_version TEXT NOT NULL
+        );",
+    )
+    .unwrap();
+    conn
+}
+
+fn catalog_row(
+    uid: &str,
+    name: &str,
+    version: Option<&str>,
+    downloads: i64,
+    directories: Option<&str>,
+    author: Option<&str>,
+    download_url: Option<&str>,
+) -> (
+    String,
+    String,
+    Option<String>,
+    Option<i64>,
+    i64,
+    i64,
+    i64,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    (
+        uid.to_string(),
+        name.to_string(),
+        version.map(|s| s.to_string()),
+        Some(1000),
+        downloads,
+        0,
+        0,
+        directories.map(|s| s.to_string()),
+        None, // category_id
+        author.map(|s| s.to_string()),
+        download_url.map(|s| s.to_string()),
+        None, // file_info_url
+    )
+}
+
+// ── Test 1: Install → Scan round-trip ──────────────────────────────
+
+#[test]
+fn test_install_then_scan() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let zip = create_test_zip(&[
+        ("CoolAddon/", b""),
+        (
+            "CoolAddon/CoolAddon.txt",
+            b"## Title: Cool Addon\n## Author: Alice\n## Version: 1.0\n## IsLibrary: false\n## DependsOn: LibStub\n",
+        ),
+        ("CoolAddon/init.lua", b"-- main file\n"),
+    ]);
+
+    // Install the addon from ZIP
+    let top_dirs = installer::install_from_zip(&zip, dir.path()).unwrap();
+    assert_eq!(top_dirs, vec!["CoolAddon"]);
+
+    // Scan should find it
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 1);
+    assert_eq!(addons[0].dir_name, "CoolAddon");
+    assert_eq!(addons[0].title, "Cool Addon");
+    assert_eq!(addons[0].author, "Alice");
+    assert_eq!(addons[0].version, "1.0");
+    assert!(!addons[0].is_library);
+    assert_eq!(addons[0].depends_on.len(), 1);
+    assert_eq!(addons[0].depends_on[0].name, "LibStub");
+}
+
+// ── Test 2: Catalog sync → Update check ────────────────────────────
+
+#[test]
+fn test_catalog_update_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // Create installed addon on disk with version 1.0
+    let addon_dir = dir.path().join("MyAddon");
+    fs::create_dir(&addon_dir).unwrap();
+    fs::write(
+        addon_dir.join("MyAddon.txt"),
+        "## Title: My Addon\n## Version: 1.0\n",
+    )
+    .unwrap();
+
+    // Create another addon that's up-to-date
+    let lib_dir = dir.path().join("LibStub");
+    fs::create_dir(&lib_dir).unwrap();
+    fs::write(
+        lib_dir.join("LibStub.txt"),
+        "## Title: LibStub\n## Version: 2.5\n## IsLibrary: true\n",
+    )
+    .unwrap();
+
+    // Populate catalog: MyAddon has 2.0 (newer), LibStub has 2.5 (same)
+    let rows = vec![
+        catalog_row("100", "My Addon", Some("2.0"), 500, Some("MyAddon"), Some("Author"), Some("https://dl/myaddon.zip")),
+        catalog_row("200", "LibStub", Some("2.5"), 1000, Some("LibStub"), Some("Lib Author"), Some("https://dl/libstub.zip")),
+    ];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    // Scan installed addons
+    let installed = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(installed.len(), 2);
+
+    // Check for updates
+    let updates = compute_updates(&conn, &installed).unwrap();
+
+    // Only MyAddon should have an update (1.0 → 2.0)
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].dir_name, "MyAddon");
+    assert_eq!(updates[0].installed_version, "1.0");
+    assert_eq!(updates[0].latest_version, "2.0");
+    assert!(!updates[0].version_mismatch);
+}
+
+// ── Test 3: Version mismatch detection ─────────────────────────────
+
+#[test]
+fn test_catalog_version_mismatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // Installed addon with version "104" (manifest version)
+    let addon_dir = dir.path().join("LoreBooks");
+    fs::create_dir(&addon_dir).unwrap();
+    fs::write(
+        addon_dir.join("LoreBooks.txt"),
+        "## Title: LoreBooks\n## Version: 104\n",
+    )
+    .unwrap();
+
+    // Catalog says version "105" — but we already installed "105" via Grimoire
+    let rows = vec![catalog_row(
+        "300",
+        "LoreBooks",
+        Some("105"),
+        2000,
+        Some("LoreBooks"),
+        None,
+        None,
+    )];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    // Record that Grimoire installed catalog version "105"
+    db::record_installed_version(&conn, "LoreBooks", "300", "105").unwrap();
+
+    let installed = manifest::scan_installed_addons(dir.path()).unwrap();
+    let updates = compute_updates(&conn, &installed).unwrap();
+
+    // Should flag as version_mismatch, not a real update
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].dir_name, "LoreBooks");
+    assert!(updates[0].version_mismatch);
+}
+
+// ── Test 4: Install → Uninstall → Scan lifecycle ───────────────────
+
+#[test]
+fn test_install_uninstall_lifecycle() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Install two addons
+    let zip = create_test_zip(&[
+        ("AddonA/AddonA.txt", b"## Title: Addon A\n"),
+        ("AddonA/main.lua", b"-- A\n"),
+        ("AddonB/AddonB.txt", b"## Title: Addon B\n"),
+        ("AddonB/main.lua", b"-- B\n"),
+    ]);
+    installer::install_from_zip(&zip, dir.path()).unwrap();
+
+    // Both should appear
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 2);
+
+    // Uninstall AddonA
+    installer::uninstall_addon(dir.path(), "AddonA").unwrap();
+
+    // Only AddonB should remain
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 1);
+    assert_eq!(addons[0].dir_name, "AddonB");
+
+    // AddonA directory should be gone
+    assert!(!dir.path().join("AddonA").exists());
+}
+
+// ── Test 5: Catalog lookup → Dependency resolution ─────────────────
+
+#[test]
+fn test_catalog_dependency_resolution() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // Install an addon that depends on two libraries
+    let zip = create_test_zip(&[(
+        "CraftHelper/CraftHelper.txt",
+        b"## Title: CraftHelper\n## DependsOn: LibAddonMenu-2.0>=32 LibStub\n",
+    )]);
+    installer::install_from_zip(&zip, dir.path()).unwrap();
+
+    // Also install LibStub (already present)
+    let lib_zip = create_test_zip(&[(
+        "LibStub/LibStub.txt",
+        b"## Title: LibStub\n## IsLibrary: true\n",
+    )]);
+    installer::install_from_zip(&lib_zip, dir.path()).unwrap();
+
+    // Scan installed addons
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    let installed_dirs: HashSet<String> = addons.iter().map(|a| a.dir_name.clone()).collect();
+
+    // Find CraftHelper's missing deps
+    let craft_helper = addons.iter().find(|a| a.dir_name == "CraftHelper").unwrap();
+    let missing = find_missing_dependencies(&craft_helper.depends_on, &installed_dirs);
+
+    // LibStub is installed, LibAddonMenu-2.0 is not
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].name, "LibAddonMenu-2.0");
+    assert_eq!(missing[0].min_version, Some(32));
+
+    // Populate catalog with LibAddonMenu-2.0
+    let rows = vec![catalog_row(
+        "500",
+        "LibAddonMenu-2.0",
+        Some("33"),
+        50000,
+        Some("LibAddonMenu-2.0"),
+        Some("sirinsidiator"),
+        Some("https://dl/lam.zip"),
+    )];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    // Verify we can look it up in the catalog for installation
+    let result = db::lookup_by_dir_name(&conn, "LibAddonMenu-2.0").unwrap();
+    assert!(result.is_some());
+    let (version, uid, download_url) = result.unwrap();
+    assert_eq!(uid, "500");
+    assert_eq!(version, Some("33".to_string()));
+    assert_eq!(download_url, Some("https://dl/lam.zip".to_string()));
+}
+
+// ── Test 6: No updates when everything is current ──────────────────
+
+#[test]
+fn test_no_updates_when_current() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // Install addon with version 3.0
+    let zip = create_test_zip(&[(
+        "UpToDate/UpToDate.txt",
+        b"## Title: Up To Date\n## Version: 3.0\n",
+    )]);
+    installer::install_from_zip(&zip, dir.path()).unwrap();
+
+    // Catalog also says 3.0
+    let rows = vec![catalog_row(
+        "400",
+        "Up To Date",
+        Some("3.0"),
+        100,
+        Some("UpToDate"),
+        None,
+        None,
+    )];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    let installed = manifest::scan_installed_addons(dir.path()).unwrap();
+    let updates = compute_updates(&conn, &installed).unwrap();
+
+    assert!(updates.is_empty(), "No updates should be found when versions match");
+}

@@ -1,9 +1,9 @@
-mod addon;
-mod commands;
+pub mod addon;
+pub mod commands;
 mod config;
-mod db;
+pub mod db;
 mod esoui;
-mod resolver;
+pub mod resolver;
 
 use std::sync::Mutex;
 use tauri::Manager;
