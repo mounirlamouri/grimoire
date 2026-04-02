@@ -105,12 +105,12 @@ fn parse_manifest(dir_name: &str, path: &Path) -> Result<InstalledAddon, String>
                 .filter_map(|v| v.parse().ok())
                 .collect();
         } else if let Some(value) = line.strip_prefix("## DependsOn:") {
-            addon.depends_on = parse_dependencies(value);
+            addon.depends_on.extend(parse_dependencies(value));
         } else if let Some(value) = line.strip_prefix("## PCDependsOn:") {
             // Some addons use PCDependsOn for PC-specific dependencies (vs console)
             addon.depends_on.extend(parse_dependencies(value));
         } else if let Some(value) = line.strip_prefix("## OptionalDependsOn:") {
-            addon.optional_depends_on = parse_dependencies(value);
+            addon.optional_depends_on.extend(parse_dependencies(value));
         } else if let Some(value) = line.strip_prefix("## IsLibrary:") {
             addon.is_library = value.trim().eq_ignore_ascii_case("true");
         } else if let Some(value) = line.strip_prefix("## Description:") {
@@ -338,6 +338,32 @@ mod tests {
         assert_eq!(addon.depends_on.len(), 2);
         assert_eq!(addon.depends_on[0].name, "LibA");
         assert_eq!(addon.depends_on[1].name, "LibB");
+    }
+
+    #[test]
+    fn test_parse_manifest_multi_line_depends_on() {
+        let dir = tempfile::tempdir().unwrap();
+        let manifest = dir.path().join("MM.txt");
+        fs::write(&manifest, "\
+## Title: Master Merchant
+## DependsOn: LibExec>=201 LibAddonMenu-2.0>=41 LibGuildRoster>=103
+## DependsOn: LibGuildStore>=105 LibDebugLogger>=268
+## OptionalDependsOn: MM00Data MM01Data
+## OptionalDependsOn: AwesomeGuildStore DebugLogViewer
+").unwrap();
+
+        let addon = parse_manifest("MM", &manifest).unwrap();
+        // All dependencies from both DependsOn lines must be present
+        assert_eq!(addon.depends_on.len(), 5);
+        assert_eq!(addon.depends_on[0].name, "LibExec");
+        assert_eq!(addon.depends_on[2].name, "LibGuildRoster");
+        assert_eq!(addon.depends_on[3].name, "LibGuildStore");
+        assert_eq!(addon.depends_on[4].name, "LibDebugLogger");
+        // All optional deps from both lines must be present
+        assert_eq!(addon.optional_depends_on.len(), 4);
+        assert_eq!(addon.optional_depends_on[0].name, "MM00Data");
+        assert_eq!(addon.optional_depends_on[2].name, "AwesomeGuildStore");
+        assert_eq!(addon.optional_depends_on[3].name, "DebugLogViewer");
     }
 
     #[test]
