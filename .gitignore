@@ -7,6 +7,9 @@ dist/
 # Rust build
 src-tauri/target/
 
+# Tauri generated files
+src-tauri/gen/
+
 # Environment
 .env
 .env.*
