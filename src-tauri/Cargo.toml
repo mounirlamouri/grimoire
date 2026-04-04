@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "ESO Addon Manager"
 authors = ["mounir"]
 license = "GPL-3.0-or-later"
+repository = "https://github.com/mounirlamouri/grimoire"
 edition = "2021"
 rust-version = "1.77.2"
 
