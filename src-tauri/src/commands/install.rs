@@ -112,12 +112,13 @@ fn install_addon_internal<'a>(
 
     let installed_dirs = installer::install_from_zip(&zip_bytes, addon_path)?;
 
-    // Record installed version
+    // Record installed version + catalog date
     let catalog_version = details.ui_version.as_deref().unwrap_or("");
     let db_state = app_handle.state::<Mutex<Connection>>();
     if let Ok(conn) = db_state.lock() {
+        let catalog_date = db::lookup_catalog_date(&conn, uid).unwrap_or(None);
         for dir in &installed_dirs {
-            let _ = db::record_installed_version(&conn, dir, uid, catalog_version);
+            let _ = db::record_installed_version(&conn, dir, uid, catalog_version, catalog_date);
         }
     }
 
@@ -175,7 +176,7 @@ fn install_addon_internal<'a>(
             let db_state = app_handle.state::<Mutex<Connection>>();
             let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
             db::lookup_by_dir_name(&conn, &dep.name)?
-                .map(|(_, uid, _)| uid)
+                .map(|(_, uid, _, _)| uid)
         };
 
         let Some(dep_uid) = dep_uid else {
@@ -257,7 +258,7 @@ pub async fn install_missing_deps(
             let db_state = app_handle.state::<Mutex<Connection>>();
             let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
             db::lookup_by_dir_name(&conn, dir_name)?
-                .map(|(_, uid, _)| uid)
+                .map(|(_, uid, _, _)| uid)
         };
 
         let Some(uid) = dep_uid else {

@@ -80,10 +80,6 @@ pub struct AddonUpdate {
     pub latest_version: String,
     pub uid: String,
     pub download_url: Option<String>,
-    /// True when we already installed the latest from ESOUI but the
-    /// manifest version doesn't match the catalog version (addon author
-    /// uses a different numbering scheme on ESOUI vs the manifest).
-    pub version_mismatch: bool,
 }
 
 // Mirrors the MMOUI API response — fields kept for schema completeness.

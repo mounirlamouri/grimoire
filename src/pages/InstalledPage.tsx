@@ -213,9 +213,9 @@ export function InstalledPage({
           {!loading && (
             <span className="text-xs text-[var(--text-secondary)]">
               {addonCount} addons, {libCount} libraries
-              {updates.filter((u) => !u.version_mismatch).length > 0 && (
+              {updates.length > 0 && (
                 <span className="ml-1 text-[var(--accent)]">
-                  ({updates.filter((u) => !u.version_mismatch).length} update{updates.filter((u) => !u.version_mismatch).length !== 1 ? "s" : ""})
+                  ({updates.length} update{updates.length !== 1 ? "s" : ""})
                 </span>
               )}
             </span>

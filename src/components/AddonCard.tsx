@@ -42,11 +42,9 @@ export function AddonCard({
       className={`cursor-pointer rounded-lg border p-3 transition hover:border-[var(--teal-dim)]/40 ${
         missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0)
           ? "border-red-500/20 bg-[var(--bg-card)]"
-          : update && !update.version_mismatch
+          : update
             ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
-            : update?.version_mismatch
-              ? "border-yellow-500/20 bg-[var(--bg-card)]"
-              : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
+            : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
       }`}
       onClick={() => setExpanded(!expanded)}
     >
@@ -59,7 +57,7 @@ export function AddonCard({
                 LIB
               </span>
             )}
-            {update && !update.version_mismatch && (
+            {update && (
               <span className="rounded bg-[var(--accent)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--accent)]">
                 UPDATE
               </span>
@@ -72,25 +70,17 @@ export function AddonCard({
                 MISSING DEPS
               </span>
             )}
-            {update?.version_mismatch && (
-              <span
-                className="rounded bg-yellow-500/20 px-1.5 py-0.5 text-[10px] font-medium text-yellow-400"
-                title="This addon reports a different version than ESOUI. You have the latest files — this is a packaging issue by the addon author."
-              >
-                VERSION MISMATCH
-              </span>
-            )}
           </div>
           <div className="mt-0.5 flex items-center gap-3 text-xs text-[var(--text-secondary)]">
             {addon.author && <span>by {addon.author}</span>}
             {addon.version && <span>v{addon.version}</span>}
-            {update && !update.version_mismatch && (
+            {update && (
               <span className="text-[var(--teal)]">→ v{update.latest_version}</span>
             )}
           </div>
         </div>
         <div className="ml-3 flex shrink-0 gap-2">
-          {update && !update.version_mismatch && (
+          {update && (
             <button
               onClick={async (e) => {
                 e.stopPropagation();
@@ -172,16 +162,6 @@ export function AddonCard({
             <div className="rounded border border-red-500/20 bg-red-500/5 px-3 py-2">
               <p className="text-xs text-red-400">
                 Missing dependencies not available on ESOUI: {missingDeps.unavailable.join(", ")}. These may have been removed or renamed.
-              </p>
-            </div>
-          )}
-          {update?.version_mismatch && (
-            <div className="rounded border border-yellow-500/20 bg-yellow-500/5 px-3 py-2">
-              <p className="text-xs text-yellow-400">
-                Version mismatch: this addon reports v{update.installed_version} but
-                ESOUI lists v{update.latest_version}. This can happen when the addon author
-                uses a different versioning scheme on ESOUI than in the addon files, or forgot
-                to update the version in the manifest. You have the latest version.
               </p>
             </div>
           )}

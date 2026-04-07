@@ -15,16 +15,14 @@ export function UpdatesBanner({
   const [updatingAll, setUpdatingAll] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  const realUpdates = updates.filter((u) => !u.version_mismatch);
-
   const handleUpdateAll = async (e: React.MouseEvent) => {
     e.preventDefault();
     setUpdatingAll(true);
     setProgress(0);
     let failed = 0;
-    for (let i = 0; i < realUpdates.length; i++) {
+    for (let i = 0; i < updates.length; i++) {
       try {
-        await onUpdate(realUpdates[i].uid);
+        await onUpdate(updates[i].uid);
       } catch (err) {
         failed++;
       }
@@ -37,13 +35,13 @@ export function UpdatesBanner({
     onDone();
   };
 
-  if (realUpdates.length === 0) return null;
+  if (updates.length === 0) return null;
 
   return (
     <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent)]/5 p-3">
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-[var(--accent)]">
-          Updates Available ({realUpdates.length})
+          Updates Available ({updates.length})
         </h3>
         <button
           onClick={handleUpdateAll}
@@ -51,12 +49,12 @@ export function UpdatesBanner({
           className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
         >
           {updatingAll
-            ? `Updating ${progress}/${realUpdates.length}...`
+            ? `Updating ${progress}/${updates.length}...`
             : "Update All"}
         </button>
       </div>
       <div className="space-y-1">
-        {realUpdates.map((u) => (
+        {updates.map((u) => (
           <div
             key={u.dir_name}
             className="flex items-center justify-between text-xs"

@@ -1,5 +1,5 @@
 use crate::addon::manifest::scan_installed_addons;
-use crate::commands::updates::compute_updates;
+use crate::commands::updates::{bootstrap_untracked, compute_updates};
 use crate::config::{paths, settings};
 use crate::db::{self, CatalogAddon};
 use crate::esoui::api::EsoUiClient;
@@ -112,7 +112,7 @@ pub async fn sync_catalog(app_handle: tauri::AppHandle) -> Result<i64, String> {
         1.0,
     );
 
-    // After sync, check for updates and emit results
+    // After sync, bootstrap untracked addons and check for updates
     let addon_path = settings::load_settings(&app_handle)
         .addon_path
         .map(PathBuf::from)
@@ -121,6 +121,14 @@ pub async fn sync_catalog(app_handle: tauri::AppHandle) -> Result<i64, String> {
 
     if let Some(path) = addon_path {
         if let Ok(installed) = scan_installed_addons(&path) {
+            // Bootstrap untracked addons (records catalog dates), emitting progress events
+            let _ = bootstrap_untracked(&conn, &installed, |current, total| {
+                let _ = app_handle.emit(
+                    "bootstrap-progress",
+                    crate::commands::updates::BootstrapProgress { current, total },
+                );
+            });
+
             if let Ok(updates) = compute_updates(&conn, &installed) {
                 let _ = app_handle.emit("updates-available", &updates);
             }

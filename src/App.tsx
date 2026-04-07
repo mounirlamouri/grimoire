@@ -5,6 +5,7 @@ import type { AddonUpdate, CatalogStatus, SyncProgress } from "./types/addon";
 import { ErrorOverlay } from "./components/ErrorOverlay";
 import { SuccessOverlay } from "./components/SuccessOverlay";
 import { SyncModal } from "./components/SyncModal";
+import { BootstrapModal } from "./components/BootstrapModal";
 import { InstalledPage } from "./pages/InstalledPage";
 import { BrowsePage } from "./pages/BrowsePage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -19,6 +20,7 @@ function App() {
   const [syncProgress, setSyncProgress] = useState<SyncProgress | null>(null);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [updates, setUpdates] = useState<AddonUpdate[]>([]);
+  const [bootstrapProgress, setBootstrapProgress] = useState<{ current: number; total: number } | null>(null);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const doSync = useCallback(
@@ -55,9 +57,19 @@ function App() {
     const unlistenUpdates = listen<AddonUpdate[]>("updates-available", (event) => {
       setUpdates(event.payload);
     });
+    const unlistenBootstrap = listen<{ current: number; total: number }>("bootstrap-progress", (event) => {
+      const { current, total } = event.payload;
+      if (current >= total) {
+        // Done — hide modal after a brief moment
+        setTimeout(() => setBootstrapProgress(null), 400);
+      } else {
+        setBootstrapProgress({ current, total });
+      }
+    });
     return () => {
       unlistenProgress.then((fn) => fn());
       unlistenUpdates.then((fn) => fn());
+      unlistenBootstrap.then((fn) => fn());
     };
   }, []);
 
@@ -116,6 +128,9 @@ function App() {
         />
       )}
       {showSyncModal && <SyncModal progress={syncProgress} />}
+      {bootstrapProgress && (
+        <BootstrapModal current={bootstrapProgress.current} total={bootstrapProgress.total} />
+      )}
       <header className="flex items-center gap-4 border-b border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-6 py-3">
         <h1 className="text-xl font-bold tracking-wide text-[var(--accent)] drop-shadow-[0_0_8px_var(--teal)]">
           Grimoire

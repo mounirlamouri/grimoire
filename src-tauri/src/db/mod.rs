@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS catalog_meta (
 CREATE TABLE IF NOT EXISTS installed_versions (
     dir_name        TEXT PRIMARY KEY,
     uid             TEXT NOT NULL,
-    catalog_version TEXT NOT NULL
+    catalog_version TEXT NOT NULL,
+    catalog_date    INTEGER
 );
 ";
 
@@ -64,6 +65,16 @@ pub fn open_db(db_path: &Path) -> Result<Connection, String> {
         .map_err(|e| format!("Failed to set WAL mode: {}", e))?;
     conn.execute_batch(SCHEMA)
         .map_err(|e| format!("Failed to create schema: {}", e))?;
+
+    // Migration: add catalog_date column if missing (for databases created before this change)
+    let has_catalog_date = conn
+        .prepare("SELECT catalog_date FROM installed_versions LIMIT 0")
+        .is_ok();
+    if !has_catalog_date {
+        conn.execute_batch("ALTER TABLE installed_versions ADD COLUMN catalog_date INTEGER;")
+            .map_err(|e| format!("Migration failed: {}", e))?;
+    }
+
     Ok(conn)
 }
 
@@ -177,15 +188,15 @@ pub fn browse_catalog(
 }
 
 /// Look up a catalog entry by directory name (matches within the comma-separated directories column).
-/// Returns (version, uid, download_url) if found.
+/// Returns (version, uid, download_url, date) if found.
 pub fn lookup_by_dir_name(
     conn: &Connection,
     dir_name: &str,
-) -> Result<Option<(Option<String>, String, Option<String>)>, String> {
+) -> Result<Option<(Option<String>, String, Option<String>, Option<i64>)>, String> {
     // directories is stored as comma-separated, so we match exact name or surrounded by commas
     let mut stmt = conn
         .prepare(
-            "SELECT version, uid, download_url FROM catalog_addons
+            "SELECT version, uid, download_url, date FROM catalog_addons
              WHERE directories = ?1
                 OR directories LIKE ?2
                 OR directories LIKE ?3
@@ -203,6 +214,7 @@ pub fn lookup_by_dir_name(
             row.get::<_, Option<String>>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, Option<String>>(2)?,
+            row.get::<_, Option<i64>>(3)?,
         ))
     });
 
@@ -234,11 +246,12 @@ pub fn record_installed_version(
     dir_name: &str,
     uid: &str,
     catalog_version: &str,
+    catalog_date: Option<i64>,
 ) -> Result<(), String> {
     conn.execute(
-        "INSERT OR REPLACE INTO installed_versions (dir_name, uid, catalog_version)
-         VALUES (?1, ?2, ?3)",
-        params![dir_name, uid, catalog_version],
+        "INSERT OR REPLACE INTO installed_versions (dir_name, uid, catalog_version, catalog_date)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![dir_name, uid, catalog_version, catalog_date],
     )
     .map_err(|e| format!("Failed to record installed version: {}", e))?;
     Ok(())
@@ -258,6 +271,37 @@ pub fn get_installed_catalog_version(
         Ok(v) => Ok(Some(v)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Failed to lookup installed version: {}", e)),
+    }
+}
+
+/// Get the catalog date that was stored when an addon was installed via Grimoire.
+pub fn get_installed_catalog_date(
+    conn: &Connection,
+    dir_name: &str,
+) -> Result<Option<i64>, String> {
+    let result = conn.query_row(
+        "SELECT catalog_date FROM installed_versions WHERE dir_name = ?1",
+        params![dir_name],
+        |row| row.get::<_, Option<i64>>(0),
+    );
+    match result {
+        Ok(v) => Ok(v),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup installed date: {}", e)),
+    }
+}
+
+/// Look up the catalog date for an addon by UID.
+pub fn lookup_catalog_date(conn: &Connection, uid: &str) -> Result<Option<i64>, String> {
+    let result = conn.query_row(
+        "SELECT date FROM catalog_addons WHERE uid = ?1",
+        params![uid],
+        |row| row.get::<_, Option<i64>>(0),
+    );
+    match result {
+        Ok(v) => Ok(v),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup catalog date: {}", e)),
     }
 }
 
@@ -472,10 +516,11 @@ mod tests {
 
         let result = lookup_by_dir_name(&conn, "MyAddon").unwrap();
         assert!(result.is_some());
-        let (version, uid, url) = result.unwrap();
+        let (version, uid, url, date) = result.unwrap();
         assert_eq!(version, Some("1.5".to_string()));
         assert_eq!(uid, "42");
         assert_eq!(url, Some("https://download".to_string()));
+        assert_eq!(date, Some(1000));
     }
 
     #[test]
@@ -521,7 +566,7 @@ mod tests {
     #[test]
     fn test_record_and_get_installed_version() {
         let conn = test_db();
-        record_installed_version(&conn, "MyAddon", "42", "1.5").unwrap();
+        record_installed_version(&conn, "MyAddon", "42", "1.5", Some(1000)).unwrap();
 
         let version = get_installed_catalog_version(&conn, "MyAddon").unwrap();
         assert_eq!(version, Some("1.5".to_string()));
@@ -530,8 +575,8 @@ mod tests {
     #[test]
     fn test_record_installed_version_upsert() {
         let conn = test_db();
-        record_installed_version(&conn, "MyAddon", "42", "1.0").unwrap();
-        record_installed_version(&conn, "MyAddon", "42", "2.0").unwrap();
+        record_installed_version(&conn, "MyAddon", "42", "1.0", Some(1000)).unwrap();
+        record_installed_version(&conn, "MyAddon", "42", "2.0", Some(2000)).unwrap();
 
         let version = get_installed_catalog_version(&conn, "MyAddon").unwrap();
         assert_eq!(version, Some("2.0".to_string()));
@@ -540,10 +585,54 @@ mod tests {
     #[test]
     fn test_remove_installed_version() {
         let conn = test_db();
-        record_installed_version(&conn, "MyAddon", "42", "1.0").unwrap();
+        record_installed_version(&conn, "MyAddon", "42", "1.0", Some(1000)).unwrap();
         remove_installed_version(&conn, "MyAddon").unwrap();
 
         assert_eq!(get_installed_catalog_version(&conn, "MyAddon").unwrap(), None);
+    }
+
+    #[test]
+    fn test_record_and_get_installed_catalog_date() {
+        let conn = test_db();
+        record_installed_version(&conn, "MyAddon", "42", "1.5", Some(1700000000000)).unwrap();
+
+        let date = get_installed_catalog_date(&conn, "MyAddon").unwrap();
+        assert_eq!(date, Some(1700000000000));
+    }
+
+    #[test]
+    fn test_get_installed_catalog_date_none_when_missing() {
+        let conn = test_db();
+        let date = get_installed_catalog_date(&conn, "Unknown").unwrap();
+        assert_eq!(date, None);
+    }
+
+    #[test]
+    fn test_record_installed_version_null_date() {
+        let conn = test_db();
+        record_installed_version(&conn, "MyAddon", "42", "1.0", None).unwrap();
+
+        let date = get_installed_catalog_date(&conn, "MyAddon").unwrap();
+        assert_eq!(date, None);
+    }
+
+    #[test]
+    fn test_lookup_catalog_date() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Addon", Some("1.5"), 100, Some("MyAddon"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let date = lookup_catalog_date(&conn, "42").unwrap();
+        assert_eq!(date, Some(1000)); // catalog_row helper sets date to 1000
+    }
+
+    #[test]
+    fn test_lookup_catalog_date_not_found() {
+        let conn = test_db();
+        let date = lookup_catalog_date(&conn, "nonexistent").unwrap();
+        assert_eq!(date, None);
     }
 
     #[test]
