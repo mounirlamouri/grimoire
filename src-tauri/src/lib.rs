@@ -60,6 +60,11 @@ pub fn run() {
             commands::install::update_addon,
             commands::install::uninstall_addon,
             commands::install::install_missing_deps,
+            commands::sharing::export_addon_list,
+            commands::sharing::upload_to_paste,
+            commands::sharing::fetch_paste,
+            commands::sharing::parse_addon_list,
+            commands::sharing::import_install_addons,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

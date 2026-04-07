@@ -67,3 +67,28 @@ export interface SyncProgress {
   detail: string;
   progress: number;
 }
+
+export interface ImportEntry {
+  dir_name: string;
+  in_catalog: boolean;
+  already_installed: boolean;
+  catalog_name: string | null;
+}
+
+export interface ImportProgress {
+  current: number;
+  total: number;
+  dir_name: string;
+  stage: string;
+}
+
+export interface ImportResult {
+  installed: string[];
+  failed: ImportFailure[];
+  skipped: string[];
+}
+
+export interface ImportFailure {
+  dir_name: string;
+  error: string;
+}

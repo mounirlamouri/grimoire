@@ -34,14 +34,12 @@ pub struct FailedDep {
     pub error: String,
 }
 
-/// Install an addon by its UID from the catalog.
-/// After installing, resolves and auto-installs missing dependencies.
-#[tauri::command]
-pub async fn install_addon(
-    app_handle: tauri::AppHandle,
-    uid: String,
-) -> Result<InstallResult, String> {
-    let addon_path = settings::load_settings(&app_handle)
+/// Resolve the addon path, initialize the ESOUI client, and seed the visited set.
+/// Shared setup for install_addon and batch import.
+pub async fn prepare_install_context(
+    app_handle: &tauri::AppHandle,
+) -> Result<(PathBuf, EsoUiClient, HashSet<String>), String> {
+    let addon_path = settings::load_settings(app_handle)
         .addon_path
         .map(PathBuf::from)
         .filter(|p| p.is_dir())
@@ -51,7 +49,6 @@ pub async fn install_addon(
     let mut client = EsoUiClient::new();
     client.init().await?;
 
-    // Seed visited set with all currently installed dir names
     let mut visited: HashSet<String> = HashSet::new();
     if let Ok(entries) = std::fs::read_dir(&addon_path) {
         for entry in entries.flatten() {
@@ -61,11 +58,22 @@ pub async fn install_addon(
         }
     }
 
+    Ok((addon_path, client, visited))
+}
+
+/// Install an addon by its UID from the catalog.
+/// After installing, resolves and auto-installs missing dependencies.
+#[tauri::command]
+pub async fn install_addon(
+    app_handle: tauri::AppHandle,
+    uid: String,
+) -> Result<InstallResult, String> {
+    let (addon_path, mut client, mut visited) = prepare_install_context(&app_handle).await?;
     install_addon_internal(&app_handle, &mut client, &addon_path, &uid, &mut visited).await
 }
 
 /// Internal recursive install function that resolves dependencies.
-fn install_addon_internal<'a>(
+pub fn install_addon_internal<'a>(
     app_handle: &'a tauri::AppHandle,
     client: &'a mut EsoUiClient,
     addon_path: &'a Path,

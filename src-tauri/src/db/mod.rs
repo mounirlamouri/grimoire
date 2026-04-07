@@ -225,6 +225,29 @@ pub fn lookup_by_dir_name(
     }
 }
 
+/// Look up the catalog display name for an addon by directory name.
+pub fn lookup_catalog_name(conn: &Connection, dir_name: &str) -> Result<Option<String>, String> {
+    let exact = dir_name;
+    let starts = format!("{},%", dir_name);
+    let ends = format!("%,{}", dir_name);
+    let middle = format!("%,{},%", dir_name);
+
+    let result = conn.query_row(
+        "SELECT name FROM catalog_addons
+         WHERE directories = ?1
+            OR directories LIKE ?2
+            OR directories LIKE ?3
+            OR directories LIKE ?4",
+        params![exact, starts, ends, middle],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(name) => Ok(Some(name)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup name for dir {}: {}", dir_name, e)),
+    }
+}
+
 /// Look up the download URL for an addon by UID.
 pub fn lookup_download_url(conn: &Connection, uid: &str) -> Result<Option<String>, String> {
     let result = conn.query_row(
@@ -646,5 +669,24 @@ mod tests {
         assert!(is_library(&Some("53".to_string())));
         assert!(!is_library(&Some("12".to_string())));
         assert!(!is_library(&None));
+    }
+
+    #[test]
+    fn test_lookup_catalog_name() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Cool Addon", Some("1.5"), 100, Some("MyCoolAddon"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let name = lookup_catalog_name(&conn, "MyCoolAddon").unwrap();
+        assert_eq!(name, Some("My Cool Addon".to_string()));
+    }
+
+    #[test]
+    fn test_lookup_catalog_name_not_found() {
+        let conn = test_db();
+        let name = lookup_catalog_name(&conn, "NonExistent").unwrap();
+        assert_eq!(name, None);
     }
 }

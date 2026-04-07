@@ -12,6 +12,7 @@ Grimoire is an open-source replacement for Minion, offering addon installation, 
 - **Install addons** with automatic dependency resolution
 - **Update detection** against the MMOUI catalog, with version mismatch handling
 - **Uninstall** addons cleanly
+- **Export/import addon lists** — share your setup via clipboard or paste.rs link
 - **Orphaned library detection** — find and remove unused shared libraries
 - **Auto-detect ESO addon path** on Windows, Linux (Wine, Steam/Proton, Flatpak)
 - **Offline catalog cache** via SQLite — browse and search without repeated API calls
@@ -63,7 +64,7 @@ cargo tauri build
 
 ```
 src-tauri/src/
-├── commands/       # Tauri IPC commands (addons, catalog, install, settings, updates)
+├── commands/       # Tauri IPC commands (addons, catalog, install, settings, sharing, updates)
 ├── esoui/          # MMOUI v3 API client and response models
 ├── addon/          # Manifest parser and ZIP installer
 ├── resolver/       # Dependency resolver (topological sort)
@@ -83,7 +84,7 @@ Grimoire uses the [MMOUI v3 API](https://api.mmoui.com/v3/globalconfig.json) to 
 ## Testing
 
 ```bash
-# Run all Rust tests (106 tests across all modules)
+# Run all Rust tests (117 tests across all modules)
 cd src-tauri && cargo test
 
 # Run live API integration tests (requires network)

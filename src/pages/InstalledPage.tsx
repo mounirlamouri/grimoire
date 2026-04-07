@@ -4,6 +4,8 @@ import type { InstalledAddon, AddonUpdate, InstallResult } from "../types/addon"
 import { AddonCard } from "../components/AddonCard";
 import { UpdatesBanner } from "../components/UpdatesBanner";
 import { OrphanedLibsPanel } from "../components/OrphanedLibsPanel";
+import { ExportModal } from "../components/ExportModal";
+import { ImportModal } from "../components/ImportModal";
 
 export function InstalledPage({
   onError,
@@ -26,6 +28,8 @@ export function InstalledPage({
   const [showLibraries, setShowLibraries] = useState(false);
   const [orphanedLibs, setOrphanedLibs] = useState<InstalledAddon[] | null>(null);
   const [loadingOrphans, setLoadingOrphans] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+  const [showImport, setShowImport] = useState(false);
 
   const loadAddons = () => {
     setLoading(true);
@@ -207,6 +211,20 @@ export function InstalledPage({
 
   return (
     <div className="space-y-4">
+      {showExport && (
+        <ExportModal
+          addons={addons}
+          onClose={() => setShowExport(false)}
+          onError={onError}
+        />
+      )}
+      {showImport && (
+        <ImportModal
+          onClose={() => setShowImport(false)}
+          onError={onError}
+          onDone={loadAddons}
+        />
+      )}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold">Installed Addons</h2>
@@ -222,6 +240,19 @@ export function InstalledPage({
           )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowExport(true)}
+            disabled={loading || addons.length === 0}
+            className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white disabled:opacity-50"
+          >
+            Export
+          </button>
+          <button
+            onClick={() => setShowImport(true)}
+            className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white"
+          >
+            Import
+          </button>
           <button
             onClick={loadAddons}
             className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white"
