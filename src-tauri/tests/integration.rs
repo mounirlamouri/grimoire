@@ -593,3 +593,78 @@ fn test_bootstrap_then_update() {
     assert_eq!(updates[0].dir_name, "MyAddon");
     assert_eq!(updates[0].latest_version, "3.0");
 }
+
+// ── Test 12: Already-installed detection via catalog directory lookup ──
+
+#[test]
+fn test_already_installed_detection() {
+    let dir = tempfile::tempdir().unwrap();
+    let conn = test_db();
+
+    // Catalog entry with directories
+    let rows = vec![
+        catalog_row("42", "Cool Addon", Some("1.0"), 1000, 100, Some("CoolAddon"), None, None),
+        catalog_row("43", "Multi Dir", Some("2.0"), 1000, 50, Some("MultiA,MultiB"), None, None),
+        catalog_row("44", "Not Installed", Some("1.0"), 1000, 10, Some("NewAddon"), None, None),
+        catalog_row("45", "No Dirs", Some("1.0"), 1000, 5, None, None, None),
+    ];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    // Install CoolAddon and MultiA on disk
+    let zip = create_test_zip(&[(
+        "CoolAddon/CoolAddon.txt",
+        b"## Title: Cool Addon\n## Version: 1.0\n",
+    )]);
+    installer::install_from_zip(&zip, dir.path()).unwrap();
+
+    let multi_zip = create_test_zip(&[
+        ("MultiA/MultiA.txt", b"## Title: Multi A\n## Version: 2.0\n"),
+        ("MultiB/MultiB.txt", b"## Title: Multi B\n## Version: 2.0\n"),
+    ]);
+    installer::install_from_zip(&multi_zip, dir.path()).unwrap();
+
+    // Simulate the already-installed check from install_addon_by_url:
+    // Look up directories by UID, then check if any exist on disk.
+    let check_already_installed = |uid: &str| -> bool {
+        let dirs = db::lookup_directories_by_uid(&conn, uid).unwrap();
+        match dirs {
+            Some(dirs) => dirs.split(',').any(|d| dir.path().join(d.trim()).is_dir()),
+            None => false,
+        }
+    };
+
+    // CoolAddon is already installed
+    assert!(check_already_installed("42"));
+
+    // Multi Dir addon — both directories exist on disk
+    assert!(check_already_installed("43"));
+
+    // Not Installed — no directory on disk
+    assert!(!check_already_installed("44"));
+
+    // Unknown UID — not in catalog
+    assert!(!check_already_installed("999"));
+
+    // Null directories in catalog — check is skipped (not considered installed)
+    assert!(!check_already_installed("45"));
+}
+
+// ── Test 13: Already-installed name lookup by UID ──────────────────
+
+#[test]
+fn test_already_installed_shows_addon_name() {
+    let conn = test_db();
+
+    let rows = vec![
+        catalog_row("42", "Cool Addon", Some("1.0"), 1000, 100, Some("CoolAddon"), None, None),
+    ];
+    db::upsert_catalog(&conn, &rows).unwrap();
+
+    // Name lookup by UID returns the display name
+    let name = db::lookup_catalog_name_by_uid(&conn, "42").unwrap();
+    assert_eq!(name, Some("Cool Addon".to_string()));
+
+    // Unknown UID returns None
+    let name = db::lookup_catalog_name_by_uid(&conn, "999").unwrap();
+    assert_eq!(name, None);
+}

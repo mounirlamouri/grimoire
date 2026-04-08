@@ -68,6 +68,7 @@ pub fn run() {
             commands::updates::check_for_updates,
             commands::updates::bootstrap_addon_dates,
             commands::install::install_addon,
+            commands::install::install_addon_by_url,
             commands::install::update_addon,
             commands::install::uninstall_addon,
             commands::install::install_missing_deps,

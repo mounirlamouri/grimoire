@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { AddonUpdate, CatalogStatus, SyncProgress } from "./types/addon";
+import type { AddonUpdate, CatalogStatus, UrlInstallResult, SyncProgress } from "./types/addon";
 import { ErrorOverlay } from "./components/ErrorOverlay";
 import { SuccessOverlay } from "./components/SuccessOverlay";
 import { SyncModal } from "./components/SyncModal";
@@ -22,7 +22,12 @@ function App() {
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [updates, setUpdates] = useState<AddonUpdate[]>([]);
   const [bootstrapProgress, setBootstrapProgress] = useState<{ current: number; total: number } | null>(null);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+  const [urlValue, setUrlValue] = useState("");
+  const [installing, setInstalling] = useState(false);
+  const [installedKey, setInstalledKey] = useState(0);
   const syncTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const urlInputRef = useRef<HTMLInputElement | null>(null);
 
   const doSync = useCallback(
     async (showModal: boolean) => {
@@ -113,6 +118,49 @@ function App() {
     };
   }, [doSync]);
 
+  const handleUrlInstall = async () => {
+    const trimmed = urlValue.trim();
+    if (!trimmed) return;
+    setInstalling(true);
+    try {
+      const result = await invoke<UrlInstallResult>("install_addon_by_url", { url: trimmed });
+      setShowUrlInput(false);
+      setUrlValue("");
+
+      if (result.already_installed) {
+        setSuccessMsg({ message: `${result.addon_name} is already installed.`, details: null });
+        return;
+      }
+
+      setInstalledKey((k) => k + 1);
+      const missingDeps = result.missing_deps ?? [];
+      const failedDeps = result.failed_deps ?? [];
+      const autoDeps = result.auto_installed_deps ?? [];
+      const errors: string[] = [];
+      if (missingDeps.length > 0) {
+        errors.push(`Some required dependencies could not be found on ESOUI: ${missingDeps.join(", ")}`);
+      }
+      if (failedDeps.length > 0) {
+        errors.push(`Failed to install some dependencies: ${failedDeps.map((d) => `${d.dir_name} (${d.error})`).join(", ")}`);
+      }
+      if (errors.length > 0) {
+        if (autoDeps.length > 0) {
+          errors.push(`Automatically installed dependencies: ${autoDeps.map((d) => d.name).join(", ")}`);
+        }
+        setGlobalError(`${result.addon_name} was installed successfully, but it may not function properly because some dependencies could not be installed.\n\n${errors.join("\n\n")}`);
+      } else {
+        setSuccessMsg({
+          message: `${result.addon_name} was installed successfully.`,
+          details: autoDeps.length > 0 ? `Automatically installed dependencies: ${autoDeps.map((d) => d.name).join(", ")}` : null,
+        });
+      }
+    } catch (err) {
+      setGlobalError(`Failed to install addon from URL.\n\n${err}`);
+    } finally {
+      setInstalling(false);
+    }
+  };
+
   return (
     <div className="flex h-screen flex-col">
       {globalError && (
@@ -152,16 +200,57 @@ function App() {
             </button>
           ))}
         </nav>
-        {syncing && !showSyncModal && (
-          <span className="ml-auto text-xs text-[var(--teal)] animate-pulse">
-            Syncing catalog...
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-2">
+          {showUrlInput && (
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleUrlInstall(); }}
+              className="flex items-center gap-1"
+            >
+              <input
+                ref={urlInputRef}
+                type="text"
+                value={urlValue}
+                onChange={(e) => setUrlValue(e.target.value)}
+                placeholder="Paste ESOUI URL…"
+                className="w-64 rounded bg-[var(--bg-primary)] px-3 py-1 text-sm text-white placeholder-white/40 border border-[var(--teal-dim)]/40 focus:border-[var(--teal)] focus:outline-none"
+                disabled={installing}
+                autoFocus
+                onKeyDown={(e) => { if (e.key === "Escape") { setShowUrlInput(false); setUrlValue(""); } }}
+              />
+              <button
+                type="submit"
+                disabled={installing || !urlValue.trim()}
+                className="rounded bg-[var(--accent)] px-3 py-1 text-sm font-medium text-white transition hover:brightness-110 disabled:opacity-40"
+              >
+                {installing ? "Installing…" : "Install"}
+              </button>
+            </form>
+          )}
+          <button
+            onClick={() => { setShowUrlInput((v) => !v); setTimeout(() => urlInputRef.current?.focus(), 50); }}
+            className={`flex h-8 w-8 items-center justify-center rounded border transition ${
+              showUrlInput
+                ? "border-[var(--accent)] bg-[var(--accent)]/20 text-white"
+                : "border-[var(--teal-dim)]/40 text-[var(--accent)] hover:bg-[var(--accent)]/15 hover:text-white hover:border-[var(--accent)]/60"
+            }`}
+            title="Install from ESOUI URL"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className={`h-5 w-5 transition-transform ${showUrlInput ? "rotate-45" : ""}`}>
+              <path d="M10.75 4.75a.75.75 0 00-1.5 0v4.5h-4.5a.75.75 0 000 1.5h4.5v4.5a.75.75 0 001.5 0v-4.5h4.5a.75.75 0 000-1.5h-4.5v-4.5z" />
+            </svg>
+          </button>
+          {syncing && !showSyncModal && (
+            <span className="text-xs text-[var(--teal)] animate-pulse">
+              Syncing catalog...
+            </span>
+          )}
+        </div>
       </header>
 
       <main className="flex-1 overflow-auto p-6">
         {activeTab === "installed" && (
           <InstalledPage
+            key={installedKey}
             onError={setGlobalError}
             onSuccess={setSuccessMsg}
             updates={updates}

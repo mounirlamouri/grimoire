@@ -32,6 +32,15 @@ export interface InstallResult {
   failed_deps: FailedDep[];
 }
 
+export interface UrlInstallResult {
+  addon_name: string;
+  already_installed: boolean;
+  installed_dirs?: string[];
+  auto_installed_deps?: AutoInstalledDep[];
+  missing_deps?: string[];
+  failed_deps?: FailedDep[];
+}
+
 export interface AutoInstalledDep {
   dir_name: string;
   name: string;

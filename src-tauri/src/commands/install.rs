@@ -297,6 +297,88 @@ pub async fn install_missing_deps(
     Ok(result)
 }
 
+/// Parse an ESOUI URL and extract the addon UID.
+/// Accepts URLs like `https://www.esoui.com/downloads/info1234.html`
+/// or `https://www.esoui.com/downloads/info1234-SomeAddon.html`.
+fn parse_esoui_url(url: &str) -> Result<String, String> {
+    use std::sync::LazyLock;
+    static RE: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"esoui\.com/downloads/info(\d+)").unwrap());
+    let caps = RE
+        .captures(url)
+        .ok_or_else(|| format!("Could not find an addon ID in the URL: {}", url))?;
+    Ok(caps[1].to_string())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct UrlInstallResult {
+    pub addon_name: String,
+    pub already_installed: bool,
+    #[serde(flatten)]
+    pub install: Option<InstallResult>,
+}
+
+/// Install an addon by its ESOUI page URL.
+#[tauri::command]
+pub async fn install_addon_by_url(
+    app_handle: tauri::AppHandle,
+    url: String,
+) -> Result<UrlInstallResult, String> {
+    let uid = parse_esoui_url(&url)?;
+
+    // Look up the addon name and directories from the catalog
+    let (catalog_name, directories) = {
+        let db_state = app_handle.state::<Mutex<Connection>>();
+        let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
+        let name = db::lookup_catalog_name_by_uid(&conn, &uid)?;
+        let dirs = db::lookup_directories_by_uid(&conn, &uid)?;
+        (name, dirs)
+    };
+
+    // Check if the addon is already installed
+    if let Some(ref dirs) = directories {
+        let addon_path = settings::load_settings(&app_handle)
+            .addon_path
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(|| paths::detect_addon_path());
+
+        if let Some(addon_path) = addon_path {
+            let is_installed = dirs
+                .split(',')
+                .any(|d| addon_path.join(d.trim()).is_dir());
+            if is_installed {
+                return Ok(UrlInstallResult {
+                    addon_name: catalog_name.unwrap_or_else(|| format!("Addon {}", uid)),
+                    already_installed: true,
+                    install: None,
+                });
+            }
+        }
+    }
+
+    let install = install_addon(app_handle.clone(), uid).await?;
+
+    // Use catalog name if available, otherwise read from the installed manifest
+    let addon_name = catalog_name.unwrap_or_else(|| {
+        let addon_path = settings::load_settings(&app_handle)
+            .addon_path
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .or_else(|| paths::detect_addon_path());
+        if let Some(addon_path) = addon_path {
+            if let Some(dir) = install.installed_dirs.first() {
+                if let Some(addon) = manifest::parse_single_manifest(&addon_path, dir) {
+                    return addon.title;
+                }
+            }
+        }
+        format!("Addon {}", url)
+    });
+
+    Ok(UrlInstallResult { addon_name, already_installed: false, install: Some(install) })
+}
+
 /// Uninstall an addon by removing its directory from the AddOns folder.
 #[tauri::command]
 pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result<(), String> {
@@ -316,4 +398,74 @@ pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_esoui_url_standard() {
+        assert_eq!(parse_esoui_url("https://www.esoui.com/downloads/info1234.html").unwrap(), "1234");
+    }
+
+    #[test]
+    fn parse_esoui_url_with_addon_name() {
+        assert_eq!(
+            parse_esoui_url("https://www.esoui.com/downloads/info2501-LibAddonMenu.html").unwrap(),
+            "2501"
+        );
+    }
+
+    #[test]
+    fn parse_esoui_url_no_scheme() {
+        assert_eq!(
+            parse_esoui_url("esoui.com/downloads/info999.html").unwrap(),
+            "999"
+        );
+    }
+
+    #[test]
+    fn parse_esoui_url_invalid() {
+        assert!(parse_esoui_url("https://google.com").is_err());
+    }
+
+    #[test]
+    fn parse_esoui_url_no_id() {
+        assert!(parse_esoui_url("https://www.esoui.com/downloads/info.html").is_err());
+    }
+
+    #[test]
+    fn parse_esoui_url_empty() {
+        assert!(parse_esoui_url("").is_err());
+    }
+
+    #[test]
+    fn parse_esoui_url_just_a_number() {
+        assert!(parse_esoui_url("1234").is_err());
+    }
+
+    #[test]
+    fn parse_esoui_url_with_query_and_fragment() {
+        assert_eq!(
+            parse_esoui_url("https://www.esoui.com/downloads/info1234-Addon.html?ref=foo#comments").unwrap(),
+            "1234"
+        );
+    }
+
+    #[test]
+    fn parse_esoui_url_http_scheme() {
+        assert_eq!(
+            parse_esoui_url("http://www.esoui.com/downloads/info5678.html").unwrap(),
+            "5678"
+        );
+    }
+
+    #[test]
+    fn parse_esoui_url_leading_zeros() {
+        assert_eq!(
+            parse_esoui_url("https://www.esoui.com/downloads/info0042.html").unwrap(),
+            "0042"
+        );
+    }
 }

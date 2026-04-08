@@ -317,6 +317,34 @@ pub fn lookup_file_info_urls_by_dir_names(
     Ok(result)
 }
 
+/// Look up the catalog display name for an addon by UID.
+pub fn lookup_catalog_name_by_uid(conn: &Connection, uid: &str) -> Result<Option<String>, String> {
+    let result = conn.query_row(
+        "SELECT name FROM catalog_addons WHERE uid = ?1",
+        params![uid],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(name) => Ok(Some(name)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup name for uid {}: {}", uid, e)),
+    }
+}
+
+/// Look up the directories for an addon by UID.
+pub fn lookup_directories_by_uid(conn: &Connection, uid: &str) -> Result<Option<String>, String> {
+    let result = conn.query_row(
+        "SELECT directories FROM catalog_addons WHERE uid = ?1",
+        params![uid],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    match result {
+        Ok(dirs) => Ok(dirs),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(format!("Failed to lookup directories for uid {}: {}", uid, e)),
+    }
+}
+
 /// Look up the catalog display name for an addon by directory name.
 pub fn lookup_catalog_name(conn: &Connection, dir_name: &str) -> Result<Option<String>, String> {
     let exact = dir_name;
@@ -938,5 +966,55 @@ mod tests {
         let conn = test_db();
         let name = lookup_catalog_name(&conn, "NonExistent").unwrap();
         assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_lookup_catalog_name_by_uid() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Cool Addon", Some("1.5"), 100, Some("MyCoolAddon"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let name = lookup_catalog_name_by_uid(&conn, "42").unwrap();
+        assert_eq!(name, Some("My Cool Addon".to_string()));
+    }
+
+    #[test]
+    fn test_lookup_catalog_name_by_uid_not_found() {
+        let conn = test_db();
+        let name = lookup_catalog_name_by_uid(&conn, "999").unwrap();
+        assert_eq!(name, None);
+    }
+
+    #[test]
+    fn test_lookup_directories_by_uid() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Addon", Some("1.0"), 100, Some("DirA,DirB"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dirs = lookup_directories_by_uid(&conn, "42").unwrap();
+        assert_eq!(dirs, Some("DirA,DirB".to_string()));
+    }
+
+    #[test]
+    fn test_lookup_directories_by_uid_not_found() {
+        let conn = test_db();
+        let dirs = lookup_directories_by_uid(&conn, "999").unwrap();
+        assert_eq!(dirs, None);
+    }
+
+    #[test]
+    fn test_lookup_directories_by_uid_null() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Addon", Some("1.0"), 100, None, None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dirs = lookup_directories_by_uid(&conn, "42").unwrap();
+        assert_eq!(dirs, None);
     }
 }
