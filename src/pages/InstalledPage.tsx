@@ -32,6 +32,7 @@ export function InstalledPage({
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [catalogDates, setCatalogDates] = useState<Record<string, number>>({});
+  const [fileInfoUrls, setFileInfoUrls] = useState<Record<string, string>>({});
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
 
   const loadAddons = () => {
@@ -159,8 +160,12 @@ export function InstalledPage({
 
   useEffect(() => {
     if (addons.length === 0) return;
-    invoke<Record<string, number>>("get_catalog_dates", { dirNames: addons.map((a) => a.dir_name) })
+    const dirNames = addons.map((a) => a.dir_name);
+    invoke<Record<string, number>>("get_catalog_dates", { dirNames })
       .then(setCatalogDates)
+      .catch(() => {});
+    invoke<Record<string, string>>("get_file_info_urls", { dirNames })
+      .then(setFileInfoUrls)
       .catch(() => {});
   }, [addons]);
 
@@ -337,6 +342,7 @@ export function InstalledPage({
                   update={updateMap.get(addon.dir_name)}
                   missingDeps={missingDepsMap.get(addon.dir_name) ?? undefined}
                   catalogDate={catalogDates[addon.dir_name] ?? null}
+                  fileInfoUrl={fileInfoUrls[addon.dir_name] ?? null}
                   stalenessWarningDays={stalenessWarningDays}
                   stalenessErrorDays={stalenessErrorDays}
                   hideStalenessWarnings={hideStalenessWarnings}

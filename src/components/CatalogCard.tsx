@@ -1,6 +1,8 @@
 import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CatalogAddon } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
+import { ExternalLinkIcon } from "./ExternalLinkIcon";
 
 function formatNumber(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -104,6 +106,18 @@ export function CatalogCard({
             {addon.directories && <span>Folders: {addon.directories}</span>}
             {addon.downloads_monthly > 0 && (
               <span>Monthly: {formatNumber(addon.downloads_monthly)}</span>
+            )}
+            {addon.file_info_url && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openUrl(addon.file_info_url!).catch(() => {});
+                }}
+                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+              >
+                <ExternalLinkIcon />
+                ESOUI Page
+              </button>
             )}
           </div>
           {staleness && (

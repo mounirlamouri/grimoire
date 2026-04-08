@@ -95,3 +95,15 @@ pub fn get_catalog_dates(
     let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
     db::lookup_dates_by_dir_names(&conn, &dir_names)
 }
+
+/// Returns the ESOUI page URL for each dir_name found in the catalog.
+/// Dir names not in the catalog are omitted.
+#[tauri::command]
+pub fn get_file_info_urls(
+    app_handle: tauri::AppHandle,
+    dir_names: Vec<String>,
+) -> Result<std::collections::HashMap<String, String>, String> {
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    db::lookup_file_info_urls_by_dir_names(&conn, &dir_names)
+}

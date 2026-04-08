@@ -1,12 +1,15 @@
 import { useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { InstalledAddon, AddonUpdate } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
+import { ExternalLinkIcon } from "./ExternalLinkIcon";
 
 export function AddonCard({
   addon,
   update,
   missingDeps,
   catalogDate,
+  fileInfoUrl,
   stalenessWarningDays,
   stalenessErrorDays,
   hideStalenessWarnings,
@@ -18,6 +21,7 @@ export function AddonCard({
   update?: AddonUpdate;
   missingDeps?: { fixable: string[]; unavailable: string[] };
   catalogDate?: number | null;
+  fileInfoUrl?: string | null;
   stalenessWarningDays: number;
   stalenessErrorDays: number;
   hideStalenessWarnings: boolean;
@@ -160,6 +164,18 @@ export function AddonCard({
             )}
             {addon.api_versions.length > 0 && (
               <span>API: {addon.api_versions.join(", ")}</span>
+            )}
+            {fileInfoUrl && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openUrl(fileInfoUrl).catch(() => {});
+                }}
+                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+              >
+                <ExternalLinkIcon />
+                ESOUI Page
+              </button>
             )}
           </div>
           {addon.depends_on.length > 0 && (

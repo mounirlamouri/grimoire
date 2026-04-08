@@ -272,6 +272,51 @@ pub fn lookup_dates_by_dir_names(
     Ok(result)
 }
 
+/// Bulk-look up ESOUI file info URLs for a set of directory names.
+/// Uses indexed LIKE queries per dir_name (same pattern as `lookup_dates_by_dir_names`).
+pub fn lookup_file_info_urls_by_dir_names(
+    conn: &Connection,
+    dir_names: &[String],
+) -> Result<std::collections::HashMap<String, String>, String> {
+    if dir_names.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT file_info_url FROM catalog_addons
+             WHERE file_info_url IS NOT NULL
+               AND (directories = ?1
+                    OR directories LIKE ?2
+                    OR directories LIKE ?3
+                    OR directories LIKE ?4)",
+        )
+        .map_err(|e| format!("Failed to prepare bulk file_info_url lookup: {}", e))?;
+
+    let mut result = std::collections::HashMap::new();
+
+    for dir_name in dir_names {
+        let exact = dir_name.as_str();
+        let starts = format!("{},%", dir_name);
+        let ends = format!("%,{}", dir_name);
+        let middle = format!("%,{},%", dir_name);
+
+        match stmt.query_row(params![exact, starts, ends, middle], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(url) => {
+                result.insert(dir_name.clone(), url);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(format!("Failed to lookup file_info_url for {}: {}", dir_name, e));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 /// Look up the catalog display name for an addon by directory name.
 pub fn lookup_catalog_name(conn: &Connection, dir_name: &str) -> Result<Option<String>, String> {
     let exact = dir_name;
@@ -827,6 +872,40 @@ mod tests {
         let dates = lookup_dates_by_dir_names(&conn, &["DirB".to_string()]).unwrap();
         assert_eq!(dates.len(), 1);
         assert_eq!(dates["DirB"], 5000);
+    }
+
+    #[test]
+    fn test_lookup_file_info_urls_by_dir_names() {
+        let conn = test_db();
+        let rows = vec![
+            (
+                "1".to_string(),
+                "Addon A".to_string(),
+                Some("1.0".to_string()),
+                Some(1000i64),
+                100i64, 0i64, 0i64,
+                Some("AddonA".to_string()),
+                None::<String>, None::<String>, None::<String>,
+                Some("https://www.esoui.com/downloads/info1.html".to_string()),
+            ),
+            catalog_row("2", "Addon B", Some("1.0"), 50, Some("AddonB"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dir_names = vec!["AddonA".to_string(), "AddonB".to_string(), "NotInCatalog".to_string()];
+        let urls = lookup_file_info_urls_by_dir_names(&conn, &dir_names).unwrap();
+
+        assert_eq!(urls.len(), 1);
+        assert_eq!(urls["AddonA"], "https://www.esoui.com/downloads/info1.html");
+        assert!(!urls.contains_key("AddonB")); // has no file_info_url
+        assert!(!urls.contains_key("NotInCatalog"));
+    }
+
+    #[test]
+    fn test_lookup_file_info_urls_by_dir_names_empty() {
+        let conn = test_db();
+        let urls = lookup_file_info_urls_by_dir_names(&conn, &[]).unwrap();
+        assert!(urls.is_empty());
     }
 
     #[test]

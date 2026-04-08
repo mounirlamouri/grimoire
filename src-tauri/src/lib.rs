@@ -15,6 +15,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -63,6 +64,7 @@ pub fn run() {
             commands::settings::get_hide_staleness_warnings,
             commands::settings::set_hide_staleness_warnings,
             commands::settings::get_catalog_dates,
+            commands::settings::get_file_info_urls,
             commands::updates::check_for_updates,
             commands::updates::bootstrap_addon_dates,
             commands::install::install_addon,
