@@ -4,6 +4,7 @@ A cross-platform addon manager for Elder Scrolls Online, built with Tauri + Reac
 
 Grimoire is an open-source replacement for Minion, offering addon installation, updates, and dependency management for Windows and Linux.
 
+[![CI](https://github.com/mounirlamouri/grimoire/actions/workflows/ci.yml/badge.svg)](https://github.com/mounirlamouri/grimoire/actions/workflows/ci.yml)
 ![GPLv3 License](https://img.shields.io/badge/license-GPLv3-blue.svg)
 
 ## Features
