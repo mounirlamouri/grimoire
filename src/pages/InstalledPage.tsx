@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { InstalledAddon, AddonUpdate, InstallResult } from "../types/addon";
 import { AddonCard } from "../components/AddonCard";
+import { useStalenessSettings } from "../hooks/useStalenessSettings";
 import { UpdatesBanner } from "../components/UpdatesBanner";
 import { OrphanedLibsPanel } from "../components/OrphanedLibsPanel";
 import { ExportModal } from "../components/ExportModal";
@@ -30,6 +31,8 @@ export function InstalledPage({
   const [loadingOrphans, setLoadingOrphans] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [catalogDates, setCatalogDates] = useState<Record<string, number>>({});
+  const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
 
   const loadAddons = () => {
     setLoading(true);
@@ -153,6 +156,13 @@ export function InstalledPage({
   useEffect(() => {
     loadAddons();
   }, []);
+
+  useEffect(() => {
+    if (addons.length === 0) return;
+    invoke<Record<string, number>>("get_catalog_dates", { dirNames: addons.map((a) => a.dir_name) })
+      .then(setCatalogDates)
+      .catch(() => {});
+  }, [addons]);
 
   const updateMap = new Map(updates.map((u) => [u.dir_name, u]));
 
@@ -326,6 +336,10 @@ export function InstalledPage({
                   addon={addon}
                   update={updateMap.get(addon.dir_name)}
                   missingDeps={missingDepsMap.get(addon.dir_name) ?? undefined}
+                  catalogDate={catalogDates[addon.dir_name] ?? null}
+                  stalenessWarningDays={stalenessWarningDays}
+                  stalenessErrorDays={stalenessErrorDays}
+                  hideStalenessWarnings={hideStalenessWarnings}
                   onUninstall={handleUninstall}
                   onUpdate={handleUpdate}
                   onFixDeps={handleFixDeps}

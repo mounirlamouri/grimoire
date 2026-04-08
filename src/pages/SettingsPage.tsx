@@ -7,6 +7,10 @@ export function SettingsPage() {
   const [status, setStatus] = useState<string>("");
   const [syncInterval, setSyncInterval] = useState<number>(2);
   const [syncStatus, setSyncStatus] = useState<string>("");
+  const [stalenessWarningDays, setStalenessWarningDays] = useState<number>(180);
+  const [stalenessErrorDays, setStalenessErrorDays] = useState<number>(365);
+  const [hideStalenessWarnings, setHideStalenessWarnings] = useState<boolean>(false);
+  const [stalenessStatus, setStalenessStatus] = useState<string>("");
 
   useEffect(() => {
     invoke<string | null>("get_addon_path")
@@ -23,6 +27,10 @@ export function SettingsPage() {
     invoke<number>("get_sync_interval")
       .then((hours) => setSyncInterval(hours))
       .catch(() => {});
+
+    invoke<number>("get_staleness_warning_days").then(setStalenessWarningDays).catch(() => {});
+    invoke<number>("get_staleness_error_days").then(setStalenessErrorDays).catch(() => {});
+    invoke<boolean>("get_hide_staleness_warnings").then(setHideStalenessWarnings).catch(() => {});
   }, []);
 
   const handleBrowse = async () => {
@@ -51,6 +59,43 @@ export function SettingsPage() {
       setTimeout(() => setSyncStatus(""), 2000);
     } catch (err) {
       setSyncStatus(`Error: ${err}`);
+    }
+  };
+
+  const handleStalenessWarningChange = async (value: string) => {
+    const days = parseInt(value, 10);
+    if (isNaN(days) || days < 1) return;
+    setStalenessWarningDays(days);
+    try {
+      await invoke("set_staleness_warning_days", { days });
+      setStalenessStatus("Saved");
+      setTimeout(() => setStalenessStatus(""), 2000);
+    } catch (err) {
+      setStalenessStatus(`Error: ${err}`);
+    }
+  };
+
+  const handleStalenessErrorChange = async (value: string) => {
+    const days = parseInt(value, 10);
+    if (isNaN(days) || days < 1) return;
+    setStalenessErrorDays(days);
+    try {
+      await invoke("set_staleness_error_days", { days });
+      setStalenessStatus("Saved");
+      setTimeout(() => setStalenessStatus(""), 2000);
+    } catch (err) {
+      setStalenessStatus(`Error: ${err}`);
+    }
+  };
+
+  const handleHideStalenessChange = async (hide: boolean) => {
+    setHideStalenessWarnings(hide);
+    try {
+      await invoke("set_hide_staleness_warnings", { hide });
+      setStalenessStatus("Saved");
+      setTimeout(() => setStalenessStatus(""), 2000);
+    } catch (err) {
+      setStalenessStatus(`Error: ${err}`);
     }
   };
 
@@ -103,6 +148,59 @@ export function SettingsPage() {
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
           How often the addon catalog and update information is automatically refreshed from ESOUI.
         </p>
+      </div>
+
+      <div className="rounded-lg bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-[var(--text-secondary)]">
+            Addon Staleness Warnings
+          </label>
+          {stalenessStatus && (
+            <span className="text-xs text-[var(--teal)]">{stalenessStatus}</span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          Show a warning or error on addon cards when an addon hasn't been updated on ESOUI in a while. Uses the last-updated date from ESOUI, not your local install date.
+        </p>
+
+        <div className="mt-3 space-y-3">
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={hideStalenessWarnings}
+              onChange={(e) => handleHideStalenessChange(e.target.checked)}
+              className="accent-[var(--teal)]"
+            />
+            Hide staleness warnings
+          </label>
+
+          <div className={`space-y-3 ${hideStalenessWarnings ? "opacity-40 pointer-events-none" : ""}`}>
+            <div className="flex items-center gap-3">
+              <span className="w-36 text-sm text-[var(--text-secondary)]">Warning after</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={stalenessWarningDays}
+                onChange={(e) => handleStalenessWarningChange(e.target.value)}
+                className="w-20 rounded border border-yellow-500/30 bg-[var(--bg-secondary)] px-3 py-1.5 text-sm text-white"
+              />
+              <span className="text-sm text-[var(--text-secondary)]">days without an update</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="w-36 text-sm text-[var(--text-secondary)]">Error after</span>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={stalenessErrorDays}
+                onChange={(e) => handleStalenessErrorChange(e.target.value)}
+                className="w-20 rounded border border-red-500/30 bg-[var(--bg-secondary)] px-3 py-1.5 text-sm text-white"
+              />
+              <span className="text-sm text-[var(--text-secondary)]">days without an update</span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

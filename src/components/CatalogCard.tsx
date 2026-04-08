@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { CatalogAddon } from "../types/addon";
+import { getStaleness } from "../utils/staleness";
 
 function formatNumber(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -10,14 +11,24 @@ function formatNumber(n: number) {
 export function CatalogCard({
   addon,
   installed,
+  stalenessWarningDays,
+  stalenessErrorDays,
+  hideStalenessWarnings,
   onInstall,
 }: {
   addon: CatalogAddon;
   installed: boolean;
+  stalenessWarningDays: number;
+  stalenessErrorDays: number;
+  hideStalenessWarnings: boolean;
   onInstall: (uid: string) => Promise<void>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [installing, setInstalling] = useState(false);
+
+  const staleness = hideStalenessWarnings
+    ? null
+    : getStaleness(addon.date, stalenessWarningDays, stalenessErrorDays);
 
   const handleInstall = async (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -31,7 +42,13 @@ export function CatalogCard({
 
   return (
     <div
-      className="cursor-pointer rounded-lg border border-[var(--teal-dim)]/20 bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40"
+      className={`cursor-pointer rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
+        staleness === "error"
+          ? "border-red-500/20"
+          : staleness === "warning"
+            ? "border-yellow-500/20"
+            : "border-[var(--teal-dim)]/20"
+      }`}
       onClick={() => setExpanded(!expanded)}
     >
       <div className="flex items-start justify-between">
@@ -51,6 +68,14 @@ export function CatalogCard({
             {installed && (
               <span className="rounded bg-[var(--teal)]/20 px-1.5 py-0.5 text-[10px] font-medium text-[var(--teal)]">
                 INSTALLED
+              </span>
+            )}
+            {staleness && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${staleness === "error" ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"}`}
+                title={`Not updated on ESOUI in over ${staleness === "error" ? stalenessErrorDays : stalenessWarningDays} days — may no longer work`}
+              >
+                STALE
               </span>
             )}
           </div>
@@ -81,6 +106,13 @@ export function CatalogCard({
               <span>Monthly: {formatNumber(addon.downloads_monthly)}</span>
             )}
           </div>
+          {staleness && (
+            <div className={`rounded border px-3 py-2 ${staleness === "error" ? "border-red-500/20 bg-red-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
+              <p className={`text-xs ${staleness === "error" ? "text-red-400" : "text-yellow-400"}`}>
+                This addon has not been updated on ESOUI in over {staleness === "error" ? stalenessErrorDays : stalenessWarningDays} days. It may no longer work with the current version of ESO.
+              </p>
+            </div>
+          )}
         </div>
       )}
     </div>

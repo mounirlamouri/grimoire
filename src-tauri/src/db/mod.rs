@@ -43,6 +43,7 @@ pub struct CatalogAddon {
     pub uid: String,
     pub name: String,
     pub version: Option<String>,
+    pub date: Option<i64>,
     pub downloads: i64,
     pub favorites: i64,
     pub downloads_monthly: i64,
@@ -150,7 +151,7 @@ pub fn search_catalog(
     let pattern = format!("%{}%", query);
     let mut stmt = conn
         .prepare(
-            "SELECT uid, name, version, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
+            "SELECT uid, name, version, date, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
              FROM catalog_addons
              WHERE name LIKE ?1 OR author LIKE ?1
              ORDER BY downloads DESC
@@ -173,7 +174,7 @@ pub fn browse_catalog(
 ) -> Result<Vec<CatalogAddon>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT uid, name, version, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
+            "SELECT uid, name, version, date, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
              FROM catalog_addons
              ORDER BY downloads DESC
              LIMIT ?1 OFFSET ?2",
@@ -223,6 +224,48 @@ pub fn lookup_by_dir_name(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Failed to lookup dir {}: {}", dir_name, e)),
     }
+}
+
+/// Bulk-look up ESOUI last-update dates for a set of directory names.
+/// Returns only entries that have a date and whose directories string contains
+/// one of the requested names. A single table scan replaces N individual queries.
+pub fn lookup_dates_by_dir_names(
+    conn: &Connection,
+    dir_names: &[String],
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    if dir_names.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let target: std::collections::HashSet<&str> = dir_names.iter().map(|s| s.as_str()).collect();
+    let mut result = std::collections::HashMap::new();
+
+    let mut stmt = conn
+        .prepare("SELECT directories, date FROM catalog_addons WHERE date IS NOT NULL")
+        .map_err(|e| format!("Failed to prepare bulk date lookup: {}", e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, i64>(1)?,
+            ))
+        })
+        .map_err(|e| format!("Failed to query catalog dates: {}", e))?;
+
+    for row in rows {
+        let (dirs, date) = row.map_err(|e| format!("Failed to read catalog row: {}", e))?;
+        if let Some(dirs_str) = dirs {
+            for dir in dirs_str.split(',') {
+                let dir = dir.trim();
+                if target.contains(dir) {
+                    result.insert(dir.to_string(), date);
+                }
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Look up the catalog display name for an addon by directory name.
@@ -339,20 +382,21 @@ pub fn remove_installed_version(conn: &Connection, dir_name: &str) -> Result<(),
 }
 
 fn row_to_catalog_addon(row: &rusqlite::Row) -> rusqlite::Result<CatalogAddon> {
-    let category_id: Option<String> = row.get(7)?;
+    let category_id: Option<String> = row.get(8)?;
     Ok(CatalogAddon {
         uid: row.get(0)?,
         name: row.get(1)?,
         version: row.get(2)?,
-        downloads: row.get(3)?,
-        favorites: row.get(4)?,
-        downloads_monthly: row.get(5)?,
-        directories: row.get(6)?,
+        date: row.get(3)?,
+        downloads: row.get(4)?,
+        favorites: row.get(5)?,
+        downloads_monthly: row.get(6)?,
+        directories: row.get(7)?,
         is_library: is_library(&category_id),
         category_id,
-        author: row.get(8)?,
-        download_url: row.get(9)?,
-        file_info_url: row.get(10)?,
+        author: row.get(9)?,
+        download_url: row.get(10)?,
+        file_info_url: row.get(11)?,
     })
 }
 
@@ -656,6 +700,91 @@ mod tests {
         let conn = test_db();
         let date = lookup_catalog_date(&conn, "nonexistent").unwrap();
         assert_eq!(date, None);
+    }
+
+    #[test]
+    fn test_catalog_addon_date_included_in_search() {
+        let conn = test_db();
+        // Use a specific date value (not the helper's default of 1000)
+        let rows = vec![(
+            "1".to_string(),
+            "My Addon".to_string(),
+            Some("1.0".to_string()),
+            Some(1_700_000_000_000i64), // specific timestamp
+            100i64, 0i64, 0i64,
+            Some("MyAddon".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let results = search_catalog(&conn, "My Addon", 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].date, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn test_catalog_addon_date_included_in_browse() {
+        let conn = test_db();
+        let rows = vec![(
+            "1".to_string(),
+            "My Addon".to_string(),
+            Some("1.0".to_string()),
+            Some(1_700_000_000_000i64),
+            100i64, 0i64, 0i64,
+            Some("MyAddon".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let results = browse_catalog(&conn, 10, 0).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].date, Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn test_catalog_addon_null_date() {
+        let conn = test_db();
+        let rows = vec![(
+            "1".to_string(),
+            "No Date Addon".to_string(),
+            Some("1.0".to_string()),
+            None::<i64>, // no date
+            100i64, 0i64, 0i64,
+            Some("NoDa".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let results = search_catalog(&conn, "No Date", 10, 0).unwrap();
+        assert_eq!(results[0].date, None);
+    }
+
+    /// Simulate the get_catalog_dates command: for each dir_name, look up the
+    /// catalog date via lookup_by_dir_name and collect only entries with a date.
+    #[test]
+    fn test_get_catalog_dates_pattern() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("1", "Addon A", Some("1.0"), 100, Some("AddonA"), None, None, None),
+            catalog_row("2", "Addon B", Some("1.0"), 50, Some("AddonB"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dir_names = vec!["AddonA", "AddonB", "NotInCatalog"];
+        let mut dates = std::collections::HashMap::new();
+        for name in &dir_names {
+            if let Ok(Some((_, _, _, Some(date)))) = lookup_by_dir_name(&conn, name) {
+                dates.insert(name.to_string(), date);
+            }
+        }
+
+        assert_eq!(dates.len(), 2);
+        assert!(dates.contains_key("AddonA"));
+        assert!(dates.contains_key("AddonB"));
+        assert!(!dates.contains_key("NotInCatalog"));
+        // catalog_row helper sets date to 1000
+        assert_eq!(dates["AddonA"], 1000);
+        assert_eq!(dates["AddonB"], 1000);
     }
 
     #[test]

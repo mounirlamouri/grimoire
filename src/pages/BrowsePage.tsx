@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { InstalledAddon, CatalogAddon, CatalogStatus, InstallResult } from "../types/addon";
 import { CatalogCard } from "../components/CatalogCard";
+import { useStalenessSettings } from "../hooks/useStalenessSettings";
 
 const PAGE_SIZE = 50;
 
@@ -23,6 +24,7 @@ export function BrowsePage({
   const [page, setPage] = useState(0);
   const [installedDirs, setInstalledDirs] = useState<Set<string>>(new Set());
   const [showLibraries, setShowLibraries] = useState(false);
+  const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
 
   const loadStatus = useCallback(async () => {
     try {
@@ -187,6 +189,9 @@ export function BrowsePage({
                     ? addon.directories.split(",").some((d) => installedDirs.has(d.trim()))
                     : false
                 }
+                stalenessWarningDays={stalenessWarningDays}
+                stalenessErrorDays={stalenessErrorDays}
+                hideStalenessWarnings={hideStalenessWarnings}
                 onInstall={handleInstall}
               />
             ))}

@@ -1,10 +1,15 @@
 import { useState } from "react";
 import type { InstalledAddon, AddonUpdate } from "../types/addon";
+import { getStaleness } from "../utils/staleness";
 
 export function AddonCard({
   addon,
   update,
   missingDeps,
+  catalogDate,
+  stalenessWarningDays,
+  stalenessErrorDays,
+  hideStalenessWarnings,
   onUninstall,
   onUpdate,
   onFixDeps,
@@ -12,10 +17,17 @@ export function AddonCard({
   addon: InstalledAddon;
   update?: AddonUpdate;
   missingDeps?: { fixable: string[]; unavailable: string[] };
+  catalogDate?: number | null;
+  stalenessWarningDays: number;
+  stalenessErrorDays: number;
+  hideStalenessWarnings: boolean;
   onUninstall: (dirName: string) => Promise<void>;
   onUpdate: (uid: string) => Promise<void>;
   onFixDeps: (dirNames: string[]) => Promise<void>;
 }) {
+  const staleness = hideStalenessWarnings
+    ? null
+    : getStaleness(catalogDate, stalenessWarningDays, stalenessErrorDays);
   const [expanded, setExpanded] = useState(false);
   const [uninstalling, setUninstalling] = useState(false);
   const [updating, setUpdating] = useState(false);
@@ -37,14 +49,18 @@ export function AddonCard({
     }
   };
 
+  const hasMissingDeps = missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0);
+
   return (
     <div
-      className={`cursor-pointer rounded-lg border p-3 transition hover:border-[var(--teal-dim)]/40 ${
-        missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0)
-          ? "border-red-500/20 bg-[var(--bg-card)]"
-          : update
-            ? "border-[var(--accent)]/30 bg-[var(--bg-card)]"
-            : "border-[var(--teal-dim)]/20 bg-[var(--bg-card)]"
+      className={`cursor-pointer rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
+        hasMissingDeps || staleness === "error"
+          ? "border-red-500/20"
+          : staleness === "warning"
+            ? "border-yellow-500/20"
+            : update
+              ? "border-[var(--accent)]/30"
+              : "border-[var(--teal-dim)]/20"
       }`}
       onClick={() => setExpanded(!expanded)}
     >
@@ -62,12 +78,20 @@ export function AddonCard({
                 UPDATE
               </span>
             )}
-            {missingDeps && (missingDeps.fixable.length > 0 || missingDeps.unavailable.length > 0) && (
+            {hasMissingDeps && (
               <span
                 className="rounded bg-red-500/20 px-1.5 py-0.5 text-[10px] font-medium text-red-400"
-                title={`Missing dependencies: ${[...missingDeps.fixable, ...missingDeps.unavailable].join(", ")}`}
+                title={`Missing dependencies: ${[...missingDeps!.fixable, ...missingDeps!.unavailable].join(", ")}`}
               >
                 MISSING DEPS
+              </span>
+            )}
+            {staleness && (
+              <span
+                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${staleness === "error" ? "bg-red-500/20 text-red-400" : "bg-yellow-500/20 text-yellow-400"}`}
+                title={`Not updated on ESOUI in over ${staleness === "error" ? stalenessErrorDays : stalenessWarningDays} days — may no longer work`}
+              >
+                STALE
               </span>
             )}
           </div>
@@ -162,6 +186,13 @@ export function AddonCard({
             <div className="rounded border border-red-500/20 bg-red-500/5 px-3 py-2">
               <p className="text-xs text-red-400">
                 Missing dependencies not available on ESOUI: {missingDeps.unavailable.join(", ")}. These may have been removed or renamed.
+              </p>
+            </div>
+          )}
+          {staleness && (
+            <div className={`rounded border px-3 py-2 ${staleness === "error" ? "border-red-500/20 bg-red-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
+              <p className={`text-xs ${staleness === "error" ? "text-red-400" : "text-yellow-400"}`}>
+                This addon has not been updated on ESOUI in over {staleness === "error" ? stalenessErrorDays : stalenessWarningDays} days. It may no longer work with the current version of ESO.
               </p>
             </div>
           )}

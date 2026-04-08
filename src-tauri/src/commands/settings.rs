@@ -1,6 +1,10 @@
 use crate::config::paths;
 use crate::config::settings::{load_settings, save_settings};
+use crate::db;
+use rusqlite::Connection;
 use std::path::PathBuf;
+use std::sync::Mutex;
+use tauri::Manager;
 
 #[tauri::command]
 pub fn get_addon_path(app_handle: tauri::AppHandle) -> Option<String> {
@@ -42,4 +46,52 @@ pub fn set_sync_interval(app_handle: tauri::AppHandle, hours: f64) -> Result<(),
     let mut settings = load_settings(&app_handle);
     settings.sync_interval_hours = hours;
     save_settings(&app_handle, &settings)
+}
+
+#[tauri::command]
+pub fn get_staleness_warning_days(app_handle: tauri::AppHandle) -> u32 {
+    load_settings(&app_handle).staleness_warning_days
+}
+
+#[tauri::command]
+pub fn set_staleness_warning_days(app_handle: tauri::AppHandle, days: u32) -> Result<(), String> {
+    let mut settings = load_settings(&app_handle);
+    settings.staleness_warning_days = days;
+    save_settings(&app_handle, &settings)
+}
+
+#[tauri::command]
+pub fn get_staleness_error_days(app_handle: tauri::AppHandle) -> u32 {
+    load_settings(&app_handle).staleness_error_days
+}
+
+#[tauri::command]
+pub fn set_staleness_error_days(app_handle: tauri::AppHandle, days: u32) -> Result<(), String> {
+    let mut settings = load_settings(&app_handle);
+    settings.staleness_error_days = days;
+    save_settings(&app_handle, &settings)
+}
+
+#[tauri::command]
+pub fn get_hide_staleness_warnings(app_handle: tauri::AppHandle) -> bool {
+    load_settings(&app_handle).hide_staleness_warnings
+}
+
+#[tauri::command]
+pub fn set_hide_staleness_warnings(app_handle: tauri::AppHandle, hide: bool) -> Result<(), String> {
+    let mut settings = load_settings(&app_handle);
+    settings.hide_staleness_warnings = hide;
+    save_settings(&app_handle, &settings)
+}
+
+/// Returns the ESOUI last-update timestamp (milliseconds since epoch) for each
+/// dir_name that is found in the catalog. Dir names not in the catalog are omitted.
+#[tauri::command]
+pub fn get_catalog_dates(
+    app_handle: tauri::AppHandle,
+    dir_names: Vec<String>,
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    let db_state = app_handle.state::<Mutex<Connection>>();
+    let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
+    db::lookup_dates_by_dir_names(&conn, &dir_names)
 }

@@ -46,6 +46,7 @@ export interface CatalogAddon {
   uid: string;
   name: string;
   version: string | null;
+  date: number | null;
   downloads: number;
   favorites: number;
   downloads_monthly: number;
