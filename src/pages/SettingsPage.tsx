@@ -65,6 +65,11 @@ export function SettingsPage() {
   const handleStalenessWarningChange = async (value: string) => {
     const days = parseInt(value, 10);
     if (isNaN(days) || days < 1) return;
+    if (days >= stalenessErrorDays) {
+      setStalenessStatus("Warning threshold must be less than error threshold");
+      setTimeout(() => setStalenessStatus(""), 3000);
+      return;
+    }
     setStalenessWarningDays(days);
     try {
       await invoke("set_staleness_warning_days", { days });
@@ -78,6 +83,11 @@ export function SettingsPage() {
   const handleStalenessErrorChange = async (value: string) => {
     const days = parseInt(value, 10);
     if (isNaN(days) || days < 1) return;
+    if (days <= stalenessWarningDays) {
+      setStalenessStatus("Error threshold must be greater than warning threshold");
+      setTimeout(() => setStalenessStatus(""), 3000);
+      return;
+    }
     setStalenessErrorDays(days);
     try {
       await invoke("set_staleness_error_days", { days });

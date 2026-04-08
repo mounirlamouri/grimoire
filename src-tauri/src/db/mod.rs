@@ -227,8 +227,8 @@ pub fn lookup_by_dir_name(
 }
 
 /// Bulk-look up ESOUI last-update dates for a set of directory names.
-/// Returns only entries that have a date and whose directories string contains
-/// one of the requested names. A single table scan replaces N individual queries.
+/// Uses indexed LIKE queries per dir_name (same pattern as `lookup_by_dir_name`)
+/// instead of a full table scan.
 pub fn lookup_dates_by_dir_names(
     conn: &Connection,
     dir_names: &[String],
@@ -237,30 +237,34 @@ pub fn lookup_dates_by_dir_names(
         return Ok(std::collections::HashMap::new());
     }
 
-    let target: std::collections::HashSet<&str> = dir_names.iter().map(|s| s.as_str()).collect();
-    let mut result = std::collections::HashMap::new();
-
     let mut stmt = conn
-        .prepare("SELECT directories, date FROM catalog_addons WHERE date IS NOT NULL")
+        .prepare(
+            "SELECT date FROM catalog_addons
+             WHERE date IS NOT NULL
+               AND (directories = ?1
+                    OR directories LIKE ?2
+                    OR directories LIKE ?3
+                    OR directories LIKE ?4)",
+        )
         .map_err(|e| format!("Failed to prepare bulk date lookup: {}", e))?;
 
-    let rows = stmt
-        .query_map([], |row| {
-            Ok((
-                row.get::<_, Option<String>>(0)?,
-                row.get::<_, i64>(1)?,
-            ))
-        })
-        .map_err(|e| format!("Failed to query catalog dates: {}", e))?;
+    let mut result = std::collections::HashMap::new();
 
-    for row in rows {
-        let (dirs, date) = row.map_err(|e| format!("Failed to read catalog row: {}", e))?;
-        if let Some(dirs_str) = dirs {
-            for dir in dirs_str.split(',') {
-                let dir = dir.trim();
-                if target.contains(dir) {
-                    result.insert(dir.to_string(), date);
-                }
+    for dir_name in dir_names {
+        let exact = dir_name.as_str();
+        let starts = format!("{},%", dir_name);
+        let ends = format!("%,{}", dir_name);
+        let middle = format!("%,{},%", dir_name);
+
+        match stmt.query_row(params![exact, starts, ends, middle], |row| {
+            row.get::<_, i64>(0)
+        }) {
+            Ok(date) => {
+                result.insert(dir_name.clone(), date);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(format!("Failed to lookup date for {}: {}", dir_name, e));
             }
         }
     }
@@ -759,10 +763,8 @@ mod tests {
         assert_eq!(results[0].date, None);
     }
 
-    /// Simulate the get_catalog_dates command: for each dir_name, look up the
-    /// catalog date via lookup_by_dir_name and collect only entries with a date.
     #[test]
-    fn test_get_catalog_dates_pattern() {
+    fn test_lookup_dates_by_dir_names() {
         let conn = test_db();
         let rows = vec![
             catalog_row("1", "Addon A", Some("1.0"), 100, Some("AddonA"), None, None, None),
@@ -770,13 +772,8 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let dir_names = vec!["AddonA", "AddonB", "NotInCatalog"];
-        let mut dates = std::collections::HashMap::new();
-        for name in &dir_names {
-            if let Ok(Some((_, _, _, Some(date)))) = lookup_by_dir_name(&conn, name) {
-                dates.insert(name.to_string(), date);
-            }
-        }
+        let dir_names = vec!["AddonA".to_string(), "AddonB".to_string(), "NotInCatalog".to_string()];
+        let dates = lookup_dates_by_dir_names(&conn, &dir_names).unwrap();
 
         assert_eq!(dates.len(), 2);
         assert!(dates.contains_key("AddonA"));
@@ -785,6 +782,51 @@ mod tests {
         // catalog_row helper sets date to 1000
         assert_eq!(dates["AddonA"], 1000);
         assert_eq!(dates["AddonB"], 1000);
+    }
+
+    #[test]
+    fn test_lookup_dates_by_dir_names_empty() {
+        let conn = test_db();
+        let dates = lookup_dates_by_dir_names(&conn, &[]).unwrap();
+        assert!(dates.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_dates_by_dir_names_skips_null_date() {
+        let conn = test_db();
+        let rows = vec![(
+            "1".to_string(),
+            "No Date Addon".to_string(),
+            Some("1.0".to_string()),
+            None::<i64>,
+            100i64, 0i64, 0i64,
+            Some("NoDa".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dates = lookup_dates_by_dir_names(&conn, &["NoDa".to_string()]).unwrap();
+        assert!(dates.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_dates_by_dir_names_comma_separated() {
+        let conn = test_db();
+        // Addon with comma-separated directories
+        let rows = vec![(
+            "1".to_string(),
+            "Multi Dir".to_string(),
+            Some("1.0".to_string()),
+            Some(5000i64),
+            100i64, 0i64, 0i64,
+            Some("DirA,DirB".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dates = lookup_dates_by_dir_names(&conn, &["DirB".to_string()]).unwrap();
+        assert_eq!(dates.len(), 1);
+        assert_eq!(dates["DirB"], 5000);
     }
 
     #[test]
