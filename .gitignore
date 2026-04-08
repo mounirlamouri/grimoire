@@ -10,6 +10,10 @@ src-tauri/target/
 # Tauri generated files
 src-tauri/gen/
 
+# Tauri signing keys
+~/.tauri/
+*.key
+
 # Environment
 .env
 .env.*

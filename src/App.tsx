@@ -9,6 +9,7 @@ import { BootstrapModal } from "./components/BootstrapModal";
 import { InstalledPage } from "./pages/InstalledPage";
 import { BrowsePage } from "./pages/BrowsePage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { AppUpdateBanner } from "./components/AppUpdateBanner";
 
 type Tab = "installed" | "browse" | "settings";
 
@@ -131,6 +132,7 @@ function App() {
       {bootstrapProgress && (
         <BootstrapModal current={bootstrapProgress.current} total={bootstrapProgress.total} />
       )}
+      <AppUpdateBanner />
       <header className="flex items-center gap-4 border-b border-[var(--teal-dim)]/30 bg-[var(--bg-secondary)] px-6 py-3">
         <h1 className="text-xl font-bold tracking-wide text-[var(--accent)] drop-shadow-[0_0_8px_var(--teal)]">
           Grimoire

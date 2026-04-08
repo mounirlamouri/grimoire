@@ -23,6 +23,14 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdEQUExRDM5NUIyMTcyMDgKUldRSWNpRmJPUjJxZlRhU09HeTM4d1FIS3dZbTNJSElxd0FMaUtuTW9PYi91bFFNejY4cDN2bXUK",
+      "endpoints": [
+        "https://github.com/mounirlamouri/grimoire/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [
