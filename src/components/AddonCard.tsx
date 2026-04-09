@@ -2,6 +2,7 @@ import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { InstalledAddon, AddonUpdate } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
+import { formatRelativeDate } from "../utils/formatDate";
 import { ExternalLinkIcon } from "./ExternalLinkIcon";
 
 export function AddonCard({
@@ -104,6 +105,11 @@ export function AddonCard({
             {addon.version && <span>v{addon.version}</span>}
             {update && (
               <span className="text-[var(--teal)]">→ v{update.latest_version}</span>
+            )}
+            {catalogDate != null && (
+              <span title={new Date(catalogDate).toLocaleDateString()}>
+                Updated {formatRelativeDate(catalogDate)}
+              </span>
             )}
           </div>
         </div>

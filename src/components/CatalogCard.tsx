@@ -2,6 +2,7 @@ import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { CatalogAddon } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
+import { formatRelativeDate } from "../utils/formatDate";
 import { ExternalLinkIcon } from "./ExternalLinkIcon";
 
 function formatNumber(n: number) {
@@ -86,6 +87,11 @@ export function CatalogCard({
             <span>{formatNumber(addon.downloads)} downloads</span>
             {addon.favorites > 0 && (
               <span>{formatNumber(addon.favorites)} favorites</span>
+            )}
+            {addon.date != null && (
+              <span title={new Date(addon.date).toLocaleDateString()}>
+                Updated {formatRelativeDate(addon.date)}
+              </span>
             )}
           </div>
         </div>
