@@ -33,6 +33,7 @@ export function InstalledPage({
   const [showImport, setShowImport] = useState(false);
   const [catalogDates, setCatalogDates] = useState<Record<string, number>>({});
   const [fileInfoUrls, setFileInfoUrls] = useState<Record<string, string>>({});
+  const [addonPath, setAddonPath] = useState<string | null>(null);
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
 
   const loadAddons = () => {
@@ -156,6 +157,7 @@ export function InstalledPage({
 
   useEffect(() => {
     loadAddons();
+    invoke<string | null>("get_addon_path").then(setAddonPath).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -343,6 +345,7 @@ export function InstalledPage({
                   missingDeps={missingDepsMap.get(addon.dir_name) ?? undefined}
                   catalogDate={catalogDates[addon.dir_name] ?? null}
                   fileInfoUrl={fileInfoUrls[addon.dir_name] ?? null}
+                  addonPath={addonPath}
                   stalenessWarningDays={stalenessWarningDays}
                   stalenessErrorDays={stalenessErrorDays}
                   hideStalenessWarnings={hideStalenessWarnings}

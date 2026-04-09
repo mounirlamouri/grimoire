@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { InstalledAddon, AddonUpdate } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
 import { formatRelativeDate } from "../utils/formatDate";
 import { ExternalLinkIcon } from "./ExternalLinkIcon";
+import { FolderIcon } from "./FolderIcon";
 
 export function AddonCard({
   addon,
@@ -11,6 +12,7 @@ export function AddonCard({
   missingDeps,
   catalogDate,
   fileInfoUrl,
+  addonPath,
   stalenessWarningDays,
   stalenessErrorDays,
   hideStalenessWarnings,
@@ -23,6 +25,7 @@ export function AddonCard({
   missingDeps?: { fixable: string[]; unavailable: string[] };
   catalogDate?: number | null;
   fileInfoUrl?: string | null;
+  addonPath?: string | null;
   stalenessWarningDays: number;
   stalenessErrorDays: number;
   hideStalenessWarnings: boolean;
@@ -164,7 +167,21 @@ export function AddonCard({
             <p className="text-[var(--text-secondary)]">{addon.description}</p>
           )}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--text-secondary)]">
-            <span>Folder: {addon.dir_name}</span>
+            {addonPath ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  revealItemInDir(`${addonPath}/${addon.dir_name}`).catch(() => {});
+                }}
+                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+                aria-label={`Open ${addon.dir_name} folder`}
+              >
+                <FolderIcon />
+                {addon.dir_name}
+              </button>
+            ) : (
+              <span>{addon.dir_name}</span>
+            )}
             {addon.addon_version != null && (
               <span>AddOnVersion: {addon.addon_version}</span>
             )}

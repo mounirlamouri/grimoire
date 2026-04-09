@@ -109,7 +109,6 @@ export function CatalogCard({
       {expanded && (
         <div className="mt-3 space-y-2 border-t border-white/5 pt-3 text-xs">
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--text-secondary)]">
-            {addon.directories && <span>Folders: {addon.directories}</span>}
             {addon.downloads_monthly > 0 && (
               <span>Monthly: {formatNumber(addon.downloads_monthly)}</span>
             )}
