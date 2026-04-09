@@ -16,8 +16,8 @@ export function formatRelativeDate(timestampMs: number): string {
 
   const years = Math.floor(months / 12);
   const remainingMonths = months % 12;
-  if (years === 1 && remainingMonths === 0) return "1 year ago";
-  if (years === 1) return `1 year, ${remainingMonths} mo ago`;
-  if (remainingMonths === 0) return `${years} years ago`;
-  return `${years} yr, ${remainingMonths} mo ago`;
+  if (remainingMonths === 0) return years === 1 ? "1 year ago" : `${years} years ago`;
+  return years === 1
+    ? `1 year, ${remainingMonths} mo ago`
+    : `${years} years, ${remainingMonths} mo ago`;
 }

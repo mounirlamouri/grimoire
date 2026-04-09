@@ -51,9 +51,9 @@ describe("formatRelativeDate", () => {
     expect(formatRelativeDate(NOW - 720 * DAY_MS)).toBe("2 years ago");
   });
 
-  it("returns 'N yr, M mo ago' for years with remaining months", () => {
-    expect(formatRelativeDate(NOW - 750 * DAY_MS)).toBe("2 yr, 1 mo ago");
-    expect(formatRelativeDate(NOW - 900 * DAY_MS)).toBe("2 yr, 6 mo ago");
+  it("returns 'N years, M mo ago' for years with remaining months", () => {
+    expect(formatRelativeDate(NOW - 750 * DAY_MS)).toBe("2 years, 1 mo ago");
+    expect(formatRelativeDate(NOW - 900 * DAY_MS)).toBe("2 years, 6 mo ago");
   });
 
   it("returns 'just now' for future timestamps", () => {
