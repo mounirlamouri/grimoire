@@ -1,8 +1,16 @@
 use super::models::*;
 use reqwest::Client;
 
-const GLOBAL_CONFIG_URL: &str = "https://api.mmoui.com/v3/globalconfig.json";
+const DEFAULT_GLOBAL_CONFIG_URL: &str = "https://api.mmoui.com/v3/globalconfig.json";
 const ESO_GAME_ID: &str = "ESO";
+
+/// Returns the MMOUI global config URL. Honors the `GRIMOIRE_API_BASE_URL`
+/// environment variable as an override, primarily for E2E tests that point
+/// the app at a local mock server.
+fn global_config_url() -> String {
+    std::env::var("GRIMOIRE_API_BASE_URL")
+        .unwrap_or_else(|_| DEFAULT_GLOBAL_CONFIG_URL.to_string())
+}
 
 pub struct EsoUiClient {
     client: Client,
@@ -21,7 +29,7 @@ impl EsoUiClient {
     pub async fn init(&mut self) -> Result<(), String> {
         let config: GlobalConfigResponse = self
             .client
-            .get(GLOBAL_CONFIG_URL)
+            .get(global_config_url())
             .send()
             .await
             .map_err(|e| format!("Failed to fetch global config: {}", e))?
@@ -119,6 +127,32 @@ mod tests {
     fn test_new_client_not_initialized() {
         let client = EsoUiClient::new();
         assert!(client.api_feeds.is_none());
+    }
+
+    #[test]
+    fn test_global_config_url_env_override() {
+        // SAFETY: `set_var` / `remove_var` are unsafe in recent Rust (multi-thread races).
+        // This test intentionally uses a unique env var name + resets it, and relies on
+        // cargo running tests single-threaded-per-process for env-var-sensitive code paths
+        // to be reliable. In practice tests here don't clash because no other test reads
+        // GRIMOIRE_API_BASE_URL.
+        let key = "GRIMOIRE_API_BASE_URL";
+        // Save any existing value so we restore it after the test.
+        let previous = std::env::var(key).ok();
+
+        unsafe { std::env::set_var(key, "http://localhost:12345/globalconfig.json"); }
+        assert_eq!(
+            global_config_url(),
+            "http://localhost:12345/globalconfig.json"
+        );
+
+        unsafe { std::env::remove_var(key); }
+        assert_eq!(global_config_url(), DEFAULT_GLOBAL_CONFIG_URL);
+
+        // Restore any previous value so we don't leak into other tests.
+        if let Some(val) = previous {
+            unsafe { std::env::set_var(key, val); }
+        }
     }
 
     #[tokio::test]

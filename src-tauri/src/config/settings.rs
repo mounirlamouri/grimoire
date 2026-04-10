@@ -1,6 +1,6 @@
+use crate::config::dirs::grimoire_config_dir;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use tauri::Manager;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -44,10 +44,7 @@ impl Default for AppSettings {
 }
 
 fn settings_path(app_handle: &tauri::AppHandle) -> std::path::PathBuf {
-    let dir = app_handle
-        .path()
-        .app_config_dir()
-        .expect("failed to resolve app config dir");
+    let dir = grimoire_config_dir(app_handle);
     fs::create_dir_all(&dir).ok();
     dir.join("settings.json")
 }

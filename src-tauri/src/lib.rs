@@ -9,6 +9,8 @@ mod tray;
 use std::sync::Mutex;
 use tauri::Manager;
 
+use crate::config::dirs::grimoire_data_dir;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -26,10 +28,7 @@ pub fn run() {
             }
 
             // Initialize SQLite database
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("failed to resolve app data dir");
+            let app_dir = grimoire_data_dir(app.handle());
             std::fs::create_dir_all(&app_dir).ok();
             let db_path = app_dir.join("catalog.db");
             let conn = db::open_db(&db_path)
