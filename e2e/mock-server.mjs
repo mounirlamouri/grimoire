@@ -107,7 +107,9 @@ function buildAddonDetails(uid, baseUrl) {
       UID: addon.uid,
       UIName: addon.name,
       UIVersion: addon.version,
-      UIDir: [addon.dirName],
+      // AddonDetails.ui_dir is a plain string, not an array — the details
+      // endpoint has a different shape from filelist.json.
+      UIDir: addon.dirName,
       UIDownload: `${baseUrl}/downloads/${addon.uid}.zip`,
       UIAuthorName: addon.author,
       UIDescription: `Mock addon ${addon.name} for E2E tests`,

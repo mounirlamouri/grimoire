@@ -205,6 +205,10 @@ export const config = {
     mockServer = await startMockServer(0);
     staticServer = await startStaticServer(STATIC_SERVER_PORT, distDir);
 
+    // Expose paths to tests via env (wdio workers inherit parent env).
+    process.env.GRIMOIRE_E2E_TEMP_DIR = tempDir;
+    process.env.GRIMOIRE_E2E_ADDONS_DIR = addonsDir;
+
     console.log(`[e2e] temp dir:       ${tempDir}`);
     console.log(`[e2e] addons dir:     ${addonsDir}`);
     console.log(`[e2e] mock MMOUI:     ${mockServer.baseUrl}`);
