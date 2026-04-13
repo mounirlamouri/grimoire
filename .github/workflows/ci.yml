@@ -30,7 +30,9 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libappindicator3-dev \
             librsvg2-dev \
-            patchelf
+            patchelf \
+            webkit2gtk-driver \
+            xvfb
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -62,14 +64,20 @@ jobs:
         run: cargo test
 
       - name: Build frontend
-        if: matrix.platform == 'windows-latest'
         run: npm run build
 
       - name: Build Rust (debug)
-        if: matrix.platform == 'windows-latest'
         working-directory: src-tauri
         run: cargo build
 
-      - name: E2E tests
+      - name: Install tauri-driver (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo install tauri-driver --locked
+
+      - name: E2E tests (Windows)
         if: matrix.platform == 'windows-latest'
         run: npm run test:e2e
+
+      - name: E2E tests (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: xvfb-run npm run test:e2e

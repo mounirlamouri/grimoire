@@ -141,11 +141,15 @@ describe("Grimoire install/uninstall flow", () => {
     await confirmButtons[1].click();
 
     // Wait for the MockAddon card to disappear from the list.
-    const mockAddonName = await $("span=MockAddon");
-    await browser.waitUntil(async () => !(await mockAddonName.isExisting()), {
-      timeout: 10000,
-      timeoutMsg: "MockAddon card still visible after uninstall",
-    });
+    // Use a polling pattern instead of caching the element reference, as
+    // WebKitWebDriver can throw stale-element errors during DOM transitions.
+    await browser.waitUntil(
+      async () => !(await $("span=MockAddon").isExisting()),
+      {
+        timeout: 10000,
+        timeoutMsg: "MockAddon card still visible after uninstall",
+      }
+    );
 
     // MockAddon's folder should be gone; MockLib should still be on disk.
     expect(existsSync(join(ADDONS_DIR, "MockAddon"))).toBe(false);

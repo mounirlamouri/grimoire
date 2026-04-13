@@ -11,7 +11,8 @@
     "tauri": "tauri",
     "test": "vitest run",
     "test:e2e": "wdio run wdio.conf.mjs",
-    "test:e2e:build": "cd src-tauri && cargo build && cd .. && wdio run wdio.conf.mjs"
+    "test:e2e:build": "cd src-tauri && cargo build && cd .. && wdio run wdio.conf.mjs",
+    "test:e2e:install-driver": "cargo install tauri-driver --locked"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",

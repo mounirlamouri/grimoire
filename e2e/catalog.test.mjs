@@ -69,7 +69,8 @@ describe("Grimoire catalog", () => {
   it("narrows results when searching by name", async () => {
     const search = await openBrowse();
 
-    await search.setValue("MockStandalone");
+    await search.click();
+    await browser.keys("MockStandalone");
 
     // Debounced 300ms; give it a moment then verify.
     const mockStandalone = await $("span=MockStandalone");
@@ -82,7 +83,10 @@ describe("Grimoire catalog", () => {
       timeoutMsg: "MockAddon still visible after filtering for MockStandalone",
     });
 
-    // Clear the search for subsequent tests.
-    await search.setValue("");
+    // Clear the search for subsequent tests — select all then delete.
+    // Uses Ctrl+A (not Cmd+A) since E2E only targets Windows and Linux.
+    await search.click();
+    await browser.keys(["Control", "a"]);
+    await browser.keys(["Backspace"]);
   });
 });
