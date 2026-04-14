@@ -3,11 +3,38 @@ import BBobReact from "@bbob/react";
 import presetHTML5 from "@bbob/preset-html5";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
-/** Convert CSS style strings (from preset-html5) to React style objects. */
+// Map BBCode [size=N] (1–7 scale) to clamped em values (0.75–1.5)
+const SIZE_MAP: Record<string, string> = {
+  "1": "0.75em", "2": "0.85em", "3": "1em", "4": "1.1em",
+  "5": "1.2em", "6": "1.35em", "7": "1.5em",
+};
+
+function clampFontSize(raw: string): string {
+  if (SIZE_MAP[raw]) return SIZE_MAP[raw];
+  const n = parseFloat(raw);
+  if (isNaN(n)) return "1em";
+  if (n >= 1 && n <= 7) return SIZE_MAP[String(Math.round(n))] || "1em";
+  const em = Math.min(1.5, Math.max(0.75, n / 14));
+  return `${em.toFixed(2)}em`;
+}
+
+/** Fix nodes: convert style strings to React objects, handle [size] and [font]. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function fixStyleAttrs(nodes: any[]): void {
+function fixNodes(nodes: any[]): void {
   for (const node of nodes) {
     if (node && typeof node === "object" && "tag" in node) {
+      // Strip [font] tags — keep content, discard the font
+      if (node.tag === "font") {
+        node.tag = "span";
+        node.attrs = {};
+      }
+      // Convert [size=N] to a span with clamped font-size
+      if (node.tag === "size") {
+        const sizeVal = node.attrs?.[node.tag] || Object.keys(node.attrs || {})[0] || "3";
+        node.tag = "span";
+        node.attrs = { style: { fontSize: clampFontSize(String(sizeVal)) } };
+      }
+      // Convert string style attrs to React style objects
       if (node.attrs && typeof node.attrs.style === "string") {
         const obj: Record<string, string> = {};
         for (const decl of (node.attrs.style as string).split(";")) {
@@ -17,22 +44,26 @@ function fixStyleAttrs(nodes: any[]): void {
             const val = decl.slice(colon + 1).trim();
             if (prop && val) {
               const camel = prop.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase());
-              obj[camel] = val;
+              obj[camel] = camel === "fontSize" ? clampFontSize(val) : val;
             }
           }
         }
         node.attrs.style = obj;
       }
-      if (Array.isArray(node.content)) fixStyleAttrs(node.content);
+      // Clamp fontSize in already-converted style objects
+      if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
+        node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
+      }
+      if (Array.isArray(node.content)) fixNodes(node.content);
     }
   }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fixStylePlugin = () => (tree: any) => { fixStyleAttrs(tree); return tree; };
+const fixNodesPlugin = () => (tree: any) => { fixNodes(tree); return tree; };
 
-const plugins = [presetHTML5(), fixStylePlugin()];
-const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "color", "url", "img", "code", "quote", "list", "center", "indent"] };
+const plugins = [presetHTML5(), fixNodesPlugin()];
+const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "center", "indent"] };
 
 class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
