@@ -102,3 +102,20 @@ export interface ImportFailure {
   dir_name: string;
   error: string;
 }
+
+export interface AddonMetadata {
+  uid: string;
+  description: string | null;
+  compatibility: string | null;
+  donation_link: string | null;
+  img_thumbs: string | null;
+  imgs: string | null;
+  siblings: string | null;
+  ui_date: number | null;
+  fetched_at: number;
+}
+
+export interface CompatibilityEntry {
+  version: string;
+  name: string;
+}

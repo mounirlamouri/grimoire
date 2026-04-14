@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { CatalogAddon } from "../types/addon";
+import type { CatalogAddon, AddonMetadata, CompatibilityEntry } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
 import { formatRelativeDate } from "../utils/formatDate";
 import { ExternalLinkIcon } from "./ExternalLinkIcon";
+import { BBCodeDescription } from "./BBCodeDescription";
 
 function formatNumber(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
@@ -18,6 +19,9 @@ export function CatalogCard({
   stalenessErrorDays,
   hideStalenessWarnings,
   onInstall,
+  metadata,
+  metadataLoading,
+  onExpand,
 }: {
   addon: CatalogAddon;
   installed: boolean;
@@ -25,9 +29,18 @@ export function CatalogCard({
   stalenessErrorDays: number;
   hideStalenessWarnings: boolean;
   onInstall: (uid: string) => Promise<void>;
+  metadata?: AddonMetadata;
+  metadataLoading?: boolean;
+  onExpand?: (uid: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [installing, setInstalling] = useState(false);
+
+  useEffect(() => {
+    if (expanded && onExpand) {
+      onExpand(addon.uid);
+    }
+  }, [expanded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const staleness = hideStalenessWarnings
     ? null
@@ -107,7 +120,33 @@ export function CatalogCard({
       </div>
 
       {expanded && (
-        <div className="mt-3 space-y-2 border-t border-white/5 pt-3 text-xs">
+        <div className="mt-3 max-h-[400px] overflow-y-auto space-y-2 border-t border-white/5 pt-3 text-xs">
+          {metadataLoading && !metadata && (
+            <p className="text-[var(--text-secondary)] animate-pulse">Loading details...</p>
+          )}
+          {metadata?.description && (
+            <BBCodeDescription text={metadata.description} />
+          )}
+          {metadata?.compatibility && (() => {
+            try {
+              const entries: CompatibilityEntry[] = JSON.parse(metadata.compatibility!);
+              if (entries.length > 0) {
+                return (
+                  <div className="flex flex-wrap gap-1">
+                    {entries.map((c) => (
+                      <span
+                        key={c.version}
+                        className="rounded bg-[var(--teal-dim)]/20 px-1.5 py-0.5 text-[10px] text-[var(--teal)]"
+                      >
+                        {c.name || c.version}
+                      </span>
+                    ))}
+                  </div>
+                );
+              }
+            } catch { /* ignore parse errors */ }
+            return null;
+          })()}
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--text-secondary)]">
             {addon.downloads_monthly > 0 && (
               <span>Monthly: {formatNumber(addon.downloads_monthly)}</span>
@@ -124,7 +163,43 @@ export function CatalogCard({
                 ESOUI Page
               </button>
             )}
+            {metadata?.donation_link && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  openUrl(metadata.donation_link!).catch(() => {});
+                }}
+                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+              >
+                Support Author
+              </button>
+            )}
           </div>
+          {metadata?.img_thumbs && (() => {
+            try {
+              const thumbs: string[] = JSON.parse(metadata.img_thumbs!);
+              if (thumbs.length > 0) {
+                const fullImgs: string[] = metadata.imgs ? JSON.parse(metadata.imgs) : thumbs;
+                return (
+                  <div className="flex gap-2 overflow-x-auto pb-1">
+                    {thumbs.map((thumb, i) => (
+                      <img
+                        key={thumb}
+                        src={thumb}
+                        alt="Screenshot"
+                        className="h-16 w-auto rounded border border-white/10 cursor-pointer hover:border-[var(--teal)]/50 transition"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openUrl(fullImgs[i] || thumb).catch(() => {});
+                        }}
+                      />
+                    ))}
+                  </div>
+                );
+              }
+            } catch { /* ignore parse errors */ }
+            return null;
+          })()}
           {staleness && (
             <div className={`rounded border px-3 py-2 ${staleness === "error" ? "border-red-500/20 bg-red-500/5" : "border-yellow-500/20 bg-yellow-500/5"}`}>
               <p className={`text-xs ${staleness === "error" ? "text-red-400" : "text-yellow-400"}`}>

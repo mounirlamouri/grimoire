@@ -103,6 +103,18 @@ pub struct AddonDetails {
     pub ui_dir: Option<String>,
     #[serde(rename = "UIDownloadTotal")]
     pub ui_download_total: Option<String>,
+    #[serde(rename = "UIDate")]
+    pub ui_date: Option<serde_json::Value>,
+    #[serde(rename = "UICompatibility")]
+    pub ui_compatibility: Option<serde_json::Value>,
+    #[serde(rename = "UIDonationLink")]
+    pub ui_donation_link: Option<serde_json::Value>,
+    #[serde(rename = "UIIMG_Thumbs")]
+    pub ui_img_thumbs: Option<Vec<String>>,
+    #[serde(rename = "UIIMGs")]
+    pub ui_imgs: Option<Vec<String>>,
+    #[serde(rename = "UISiblings")]
+    pub ui_siblings: Option<serde_json::Value>,
 }
 
 #[cfg(test)]

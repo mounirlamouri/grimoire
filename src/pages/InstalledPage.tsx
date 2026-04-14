@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { InstalledAddon, AddonUpdate, InstallResult } from "../types/addon";
 import { AddonCard } from "../components/AddonCard";
 import { useStalenessSettings } from "../hooks/useStalenessSettings";
+import { useAddonMetadata } from "../hooks/useAddonMetadata";
 import { UpdatesBanner } from "../components/UpdatesBanner";
 import { OrphanedLibsPanel } from "../components/OrphanedLibsPanel";
 import { ExportModal } from "../components/ExportModal";
@@ -34,7 +35,9 @@ export function InstalledPage({
   const [catalogDates, setCatalogDates] = useState<Record<string, number>>({});
   const [fileInfoUrls, setFileInfoUrls] = useState<Record<string, string>>({});
   const [addonPath, setAddonPath] = useState<string | null>(null);
+  const [uidMap, setUidMap] = useState<Record<string, string>>({});
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
+  const { metadataMap, loadingUids, fetchMetadata } = useAddonMetadata();
 
   const loadAddons = () => {
     setLoading(true);
@@ -168,6 +171,9 @@ export function InstalledPage({
       .catch(() => {});
     invoke<Record<string, string>>("get_file_info_urls", { dirNames })
       .then(setFileInfoUrls)
+      .catch(() => {});
+    invoke<Record<string, string>>("resolve_uids", { dirNames })
+      .then(setUidMap)
       .catch(() => {});
   }, [addons]);
 
@@ -352,6 +358,12 @@ export function InstalledPage({
                   onUninstall={handleUninstall}
                   onUpdate={handleUpdate}
                   onFixDeps={handleFixDeps}
+                  metadata={uidMap[addon.dir_name] ? metadataMap.get(uidMap[addon.dir_name]) : undefined}
+                  metadataLoading={uidMap[addon.dir_name] ? loadingUids.has(uidMap[addon.dir_name]) : false}
+                  onExpand={(dirName) => {
+                    const uid = uidMap[dirName];
+                    if (uid) fetchMetadata(uid);
+                  }}
                 />
               ))}
             </div>

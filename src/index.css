@@ -18,3 +18,55 @@ body {
   color: var(--text-primary);
   font-family: system-ui, -apple-system, sans-serif;
 }
+
+/* BBCode description styling */
+.bbcode-description a {
+  color: var(--teal);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.bbcode-description a:hover {
+  color: var(--accent);
+}
+.bbcode-description img {
+  max-width: 100%;
+  max-height: 300px;
+  height: auto;
+  border-radius: 4px;
+  margin: 4px 0;
+  object-fit: contain;
+}
+.bbcode-description iframe {
+  max-width: 100%;
+  max-height: 200px;
+}
+.bbcode-description table {
+  max-width: 100%;
+  overflow-x: auto;
+  display: block;
+}
+.bbcode-description blockquote {
+  border-left: 3px solid var(--teal-dim);
+  padding-left: 10px;
+  margin: 6px 0;
+  opacity: 0.85;
+}
+.bbcode-description pre,
+.bbcode-description code {
+  background: rgba(0, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 0.85em;
+}
+.bbcode-description pre {
+  padding: 8px;
+  overflow-x: auto;
+}
+.bbcode-description ul,
+.bbcode-description ol {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+.bbcode-description li {
+  margin: 2px 0;
+}

@@ -32,6 +32,18 @@ CREATE TABLE IF NOT EXISTS installed_versions (
     catalog_version TEXT NOT NULL,
     catalog_date    INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS addon_metadata (
+    uid             TEXT PRIMARY KEY,
+    description     TEXT,
+    compatibility   TEXT,
+    donation_link   TEXT,
+    img_thumbs      TEXT,
+    imgs            TEXT,
+    siblings        TEXT,
+    ui_date         INTEGER,
+    fetched_at      INTEGER NOT NULL
+);
 ";
 
 /// ESOUI category ID for libraries.
@@ -446,6 +458,158 @@ pub fn lookup_catalog_date(conn: &Connection, uid: &str) -> Result<Option<i64>, 
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(format!("Failed to lookup catalog date: {}", e)),
     }
+}
+
+/// A cached metadata row from addon_metadata, returned to the frontend.
+#[derive(Debug, serde::Serialize, Clone)]
+pub struct AddonMetadata {
+    pub uid: String,
+    pub description: Option<String>,
+    pub compatibility: Option<String>,
+    pub donation_link: Option<String>,
+    pub img_thumbs: Option<String>,
+    pub imgs: Option<String>,
+    pub siblings: Option<String>,
+    pub ui_date: Option<i64>,
+    pub fetched_at: i64,
+}
+
+/// Get cached metadata for a batch of UIDs.
+pub fn get_cached_metadata_batch(
+    conn: &Connection,
+    uids: &[String],
+) -> Result<std::collections::HashMap<String, AddonMetadata>, String> {
+    if uids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut result = std::collections::HashMap::new();
+    let mut stmt = conn
+        .prepare(
+            "SELECT uid, description, compatibility, donation_link, img_thumbs, imgs, siblings, ui_date, fetched_at
+             FROM addon_metadata WHERE uid = ?1",
+        )
+        .map_err(|e| format!("Failed to prepare metadata lookup: {}", e))?;
+
+    for uid in uids {
+        match stmt.query_row(params![uid], |row| {
+            Ok(AddonMetadata {
+                uid: row.get(0)?,
+                description: row.get(1)?,
+                compatibility: row.get(2)?,
+                donation_link: row.get(3)?,
+                img_thumbs: row.get(4)?,
+                imgs: row.get(5)?,
+                siblings: row.get(6)?,
+                ui_date: row.get(7)?,
+                fetched_at: row.get(8)?,
+            })
+        }) {
+            Ok(meta) => {
+                result.insert(uid.clone(), meta);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(format!("Failed to lookup metadata for {}: {}", uid, e));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Insert or replace metadata for a single addon.
+pub fn upsert_metadata(
+    conn: &Connection,
+    uid: &str,
+    description: Option<&str>,
+    compatibility: Option<&str>,
+    donation_link: Option<&str>,
+    img_thumbs: Option<&str>,
+    imgs: Option<&str>,
+    siblings: Option<&str>,
+    ui_date: Option<i64>,
+    fetched_at: i64,
+) -> Result<(), String> {
+    conn.execute(
+        "INSERT OR REPLACE INTO addon_metadata (uid, description, compatibility, donation_link, img_thumbs, imgs, siblings, ui_date, fetched_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![uid, description, compatibility, donation_link, img_thumbs, imgs, siblings, ui_date, fetched_at],
+    )
+    .map_err(|e| format!("Failed to upsert metadata: {}", e))?;
+    Ok(())
+}
+
+/// Get the current catalog date for a batch of UIDs (used for staleness checks).
+pub fn get_catalog_dates_by_uids(
+    conn: &Connection,
+    uids: &[String],
+) -> Result<std::collections::HashMap<String, i64>, String> {
+    if uids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut result = std::collections::HashMap::new();
+    let mut stmt = conn
+        .prepare("SELECT date FROM catalog_addons WHERE uid = ?1 AND date IS NOT NULL")
+        .map_err(|e| format!("Failed to prepare catalog date lookup: {}", e))?;
+
+    for uid in uids {
+        match stmt.query_row(params![uid], |row| row.get::<_, i64>(0)) {
+            Ok(date) => {
+                result.insert(uid.clone(), date);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(format!("Failed to lookup catalog date for {}: {}", uid, e));
+            }
+        }
+    }
+
+    Ok(result)
+}
+
+/// Bulk-look up UIDs for a set of directory names.
+pub fn lookup_uids_by_dir_names(
+    conn: &Connection,
+    dir_names: &[String],
+) -> Result<std::collections::HashMap<String, String>, String> {
+    if dir_names.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT uid FROM catalog_addons
+             WHERE directories = ?1
+                OR directories LIKE ?2
+                OR directories LIKE ?3
+                OR directories LIKE ?4",
+        )
+        .map_err(|e| format!("Failed to prepare UID lookup: {}", e))?;
+
+    let mut result = std::collections::HashMap::new();
+
+    for dir_name in dir_names {
+        let exact = dir_name.as_str();
+        let starts = format!("{},%", dir_name);
+        let ends = format!("%,{}", dir_name);
+        let middle = format!("%,{},%", dir_name);
+
+        match stmt.query_row(params![exact, starts, ends, middle], |row| {
+            row.get::<_, String>(0)
+        }) {
+            Ok(uid) => {
+                result.insert(dir_name.clone(), uid);
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {}
+            Err(e) => {
+                return Err(format!("Failed to lookup UID for {}: {}", dir_name, e));
+            }
+        }
+    }
+
+    Ok(result)
 }
 
 /// Remove the installed version record (e.g., after uninstall).
@@ -1016,5 +1180,149 @@ mod tests {
 
         let dirs = lookup_directories_by_uid(&conn, "42").unwrap();
         assert_eq!(dirs, None);
+    }
+
+    #[test]
+    fn test_addon_metadata_table_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = open_db(&db_path).unwrap();
+        // Verify table exists by inserting and querying
+        upsert_metadata(&conn, "1", Some("desc"), None, None, None, None, None, Some(1000), 999).unwrap();
+        let batch = get_cached_metadata_batch(&conn, &["1".to_string()]).unwrap();
+        assert_eq!(batch.len(), 1);
+        assert_eq!(batch["1"].description, Some("desc".to_string()));
+    }
+
+    #[test]
+    fn test_upsert_and_get_metadata() {
+        let conn = test_db();
+        upsert_metadata(
+            &conn, "42", Some("A cool addon"), Some("[{\"version\":\"101047\",\"name\":\"U43\"}]"),
+            Some("https://donate.example.com"), Some("[\"thumb1.png\"]"), Some("[\"full1.png\"]"),
+            Some("null"), Some(1700000000000), 1000,
+        ).unwrap();
+
+        let batch = get_cached_metadata_batch(&conn, &["42".to_string()]).unwrap();
+        assert_eq!(batch.len(), 1);
+        let meta = &batch["42"];
+        assert_eq!(meta.uid, "42");
+        assert_eq!(meta.description, Some("A cool addon".to_string()));
+        assert_eq!(meta.compatibility, Some("[{\"version\":\"101047\",\"name\":\"U43\"}]".to_string()));
+        assert_eq!(meta.donation_link, Some("https://donate.example.com".to_string()));
+        assert_eq!(meta.img_thumbs, Some("[\"thumb1.png\"]".to_string()));
+        assert_eq!(meta.imgs, Some("[\"full1.png\"]".to_string()));
+        assert_eq!(meta.ui_date, Some(1700000000000));
+        assert_eq!(meta.fetched_at, 1000);
+    }
+
+    #[test]
+    fn test_upsert_metadata_replaces() {
+        let conn = test_db();
+        upsert_metadata(&conn, "42", Some("old desc"), None, None, None, None, None, Some(1000), 100).unwrap();
+        upsert_metadata(&conn, "42", Some("new desc"), None, None, None, None, None, Some(2000), 200).unwrap();
+
+        let batch = get_cached_metadata_batch(&conn, &["42".to_string()]).unwrap();
+        assert_eq!(batch["42"].description, Some("new desc".to_string()));
+        assert_eq!(batch["42"].ui_date, Some(2000));
+        assert_eq!(batch["42"].fetched_at, 200);
+    }
+
+    #[test]
+    fn test_get_cached_metadata_batch_empty() {
+        let conn = test_db();
+        let batch = get_cached_metadata_batch(&conn, &[]).unwrap();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_get_cached_metadata_batch_missing() {
+        let conn = test_db();
+        let batch = get_cached_metadata_batch(&conn, &["nonexistent".to_string()]).unwrap();
+        assert!(batch.is_empty());
+    }
+
+    #[test]
+    fn test_get_catalog_dates_by_uids() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("1", "Addon A", Some("1.0"), 100, Some("AddonA"), None, None, None),
+            catalog_row("2", "Addon B", Some("1.0"), 50, Some("AddonB"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let dates = get_catalog_dates_by_uids(&conn, &["1".to_string(), "2".to_string(), "99".to_string()]).unwrap();
+        assert_eq!(dates.len(), 2);
+        assert_eq!(dates["1"], 1000); // catalog_row sets date to 1000
+        assert_eq!(dates["2"], 1000);
+        assert!(!dates.contains_key("99"));
+    }
+
+    #[test]
+    fn test_get_catalog_dates_by_uids_empty() {
+        let conn = test_db();
+        let dates = get_catalog_dates_by_uids(&conn, &[]).unwrap();
+        assert!(dates.is_empty());
+    }
+
+    #[test]
+    fn test_lookup_uids_by_dir_names() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("42", "My Addon", Some("1.0"), 100, Some("MyAddon"), None, None, None),
+            catalog_row("99", "Multi Dir", Some("1.0"), 50, Some("DirA,DirB"), None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let uids = lookup_uids_by_dir_names(&conn, &[
+            "MyAddon".to_string(), "DirA".to_string(), "DirB".to_string(), "NotFound".to_string(),
+        ]).unwrap();
+        assert_eq!(uids.len(), 3);
+        assert_eq!(uids["MyAddon"], "42");
+        assert_eq!(uids["DirA"], "99");
+        assert_eq!(uids["DirB"], "99");
+        assert!(!uids.contains_key("NotFound"));
+    }
+
+    #[test]
+    fn test_lookup_uids_by_dir_names_empty() {
+        let conn = test_db();
+        let uids = lookup_uids_by_dir_names(&conn, &[]).unwrap();
+        assert!(uids.is_empty());
+    }
+
+    #[test]
+    fn test_metadata_staleness_check() {
+        let conn = test_db();
+        // Insert catalog entry with date 2000
+        let rows = vec![(
+            "1".to_string(),
+            "Addon".to_string(),
+            Some("1.0".to_string()),
+            Some(2000i64),
+            100i64, 0i64, 0i64,
+            Some("AddonDir".to_string()),
+            None::<String>, None::<String>, None::<String>, None::<String>,
+        )];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        // Cache metadata with ui_date 1000 (stale — catalog has 2000)
+        upsert_metadata(&conn, "1", Some("old desc"), None, None, None, None, None, Some(1000), 100).unwrap();
+
+        let cached = get_cached_metadata_batch(&conn, &["1".to_string()]).unwrap();
+        let catalog_dates = get_catalog_dates_by_uids(&conn, &["1".to_string()]).unwrap();
+
+        // Verify staleness: cached ui_date (1000) != catalog date (2000)
+        let meta = &cached["1"];
+        let catalog_date = catalog_dates["1"];
+        assert_ne!(meta.ui_date.unwrap(), catalog_date);
+
+        // Now update metadata with current catalog date
+        upsert_metadata(&conn, "1", Some("new desc"), None, None, None, None, None, Some(2000), 200).unwrap();
+
+        let cached2 = get_cached_metadata_batch(&conn, &["1".to_string()]).unwrap();
+        let meta2 = &cached2["1"];
+        assert_eq!(meta2.ui_date.unwrap(), catalog_date); // now fresh
+        assert_eq!(meta2.description, Some("new desc".to_string()));
     }
 }

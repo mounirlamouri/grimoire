@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { InstalledAddon, CatalogAddon, CatalogStatus, InstallResult } from "../types/addon";
 import { CatalogCard } from "../components/CatalogCard";
 import { useStalenessSettings } from "../hooks/useStalenessSettings";
+import { useAddonMetadata } from "../hooks/useAddonMetadata";
 
 const PAGE_SIZE = 50;
 
@@ -25,6 +26,7 @@ export function BrowsePage({
   const [installedDirs, setInstalledDirs] = useState<Set<string>>(new Set());
   const [showLibraries, setShowLibraries] = useState(false);
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
+  const { metadataMap, loadingUids, fetchMetadata } = useAddonMetadata();
 
   const loadStatus = useCallback(async () => {
     try {
@@ -193,6 +195,9 @@ export function BrowsePage({
                 stalenessErrorDays={stalenessErrorDays}
                 hideStalenessWarnings={hideStalenessWarnings}
                 onInstall={handleInstall}
+                metadata={metadataMap.get(addon.uid)}
+                metadataLoading={loadingUids.has(addon.uid)}
+                onExpand={fetchMetadata}
               />
             ))}
           </div>

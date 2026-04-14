@@ -52,6 +52,8 @@ pub fn run() {
             commands::catalog::sync_catalog,
             commands::catalog::get_catalog_status,
             commands::catalog::search_addons,
+            commands::catalog::fetch_addon_metadata,
+            commands::catalog::resolve_uids,
             commands::settings::get_addon_path,
             commands::settings::set_addon_path,
             commands::settings::get_sync_interval,
