@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from "react";
 import BBobReact from "@bbob/react";
-import presetHTML5 from "@bbob/preset-html5";
+import presetReact from "@bbob/preset-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 // Map BBCode [size=N] (1–7 scale) to clamped em values (0.75–1.5)
@@ -18,11 +18,15 @@ function clampFontSize(raw: string): string {
   return `${em.toFixed(2)}em`;
 }
 
-/** Fix nodes: convert style strings to React objects, handle [size] and [font]. */
+/** Fix nodes: handle [size], [font], and [list] tags, clamp font sizes. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function fixNodes(nodes: any[]): void {
   for (const node of nodes) {
     if (node && typeof node === "object" && "tag" in node) {
+      // Convert [*] to <li> (preset misses these when content is split across siblings)
+      if (node.tag === "*") {
+        node.tag = "li";
+      }
       // Strip [font] tags — keep content, discard the font
       if (node.tag === "font") {
         node.tag = "span";
@@ -34,23 +38,7 @@ function fixNodes(nodes: any[]): void {
         node.tag = "span";
         node.attrs = { style: { fontSize: clampFontSize(String(sizeVal)) } };
       }
-      // Convert string style attrs to React style objects
-      if (node.attrs && typeof node.attrs.style === "string") {
-        const obj: Record<string, string> = {};
-        for (const decl of (node.attrs.style as string).split(";")) {
-          const colon = decl.indexOf(":");
-          if (colon > 0) {
-            const prop = decl.slice(0, colon).trim();
-            const val = decl.slice(colon + 1).trim();
-            if (prop && val) {
-              const camel = prop.replace(/-([a-z])/g, (_: string, c: string) => c.toUpperCase());
-              obj[camel] = camel === "fontSize" ? clampFontSize(val) : val;
-            }
-          }
-        }
-        node.attrs.style = obj;
-      }
-      // Clamp fontSize in already-converted style objects
+      // Clamp fontSize in style objects from preset-react
       if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
         node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
       }
@@ -62,8 +50,8 @@ function fixNodes(nodes: any[]): void {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const fixNodesPlugin = () => (tree: any) => { fixNodes(tree); return tree; };
 
-const plugins = [presetHTML5(), fixNodesPlugin()];
-const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "center", "indent"] };
+const plugins = [presetReact(), fixNodesPlugin()];
+const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "*", "center", "indent"] };
 
 class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
