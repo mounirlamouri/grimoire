@@ -18,10 +18,55 @@ function clampFontSize(raw: string): string {
   return `${em.toFixed(2)}em`;
 }
 
-/** Fix nodes: handle [size], [font], and [list] tags, clamp font sizes. */
+const BLOCK_TAGS = new Set(["ul", "ol", "blockquote", "pre"]);
+
+/** Normalize tag names to lowercase and strip \r from strings so the preset matches correctly. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeNodes(nodes: any[]): void {
+  for (let i = 0; i < nodes.length; i++) {
+    if (typeof nodes[i] === "string") {
+      nodes[i] = nodes[i].replace(/\r/g, "");
+    } else if (nodes[i] && typeof nodes[i] === "object" && "tag" in nodes[i]) {
+      nodes[i].tag = nodes[i].tag.toLowerCase();
+      if (Array.isArray(nodes[i].content)) normalizeNodes(nodes[i].content);
+    }
+  }
+}
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const normalizePlugin = () => (tree: any) => { normalizeNodes(tree); return tree; };
+
+/** Split string nodes on \n, inserting <br> tag nodes to preserve line breaks. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function splitNewlines(nodes: any[]): any[] {
+  const result: any[] = [];
+  for (const node of nodes) {
+    if (typeof node === "string" && node.includes("\n")) {
+      const parts = node.split("\n");
+      for (let i = 0; i < parts.length; i++) {
+        if (parts[i]) result.push(parts[i]);
+        if (i < parts.length - 1) result.push({ tag: "br", attrs: {}, content: [] });
+      }
+    } else {
+      result.push(node);
+    }
+  }
+  // Remove <br> nodes immediately before or after block-level elements
+  return result.filter((node, i) => {
+    if (node?.tag !== "br") return true;
+    const prev = result[i - 1];
+    const next = result[i + 1];
+    return !(
+      (prev && BLOCK_TAGS.has(prev?.tag)) ||
+      (next && BLOCK_TAGS.has(next?.tag))
+    );
+  });
+}
+
+/** Fix nodes: handle [*], [size], [font] tags, clamp font sizes, preserve newlines. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function fixNodes(nodes: any[]): void {
-  for (const node of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const node = nodes[i];
     if (node && typeof node === "object" && "tag" in node) {
       // Convert [*] to <li> (preset misses these when content is split across siblings)
       if (node.tag === "*") {
@@ -42,15 +87,31 @@ function fixNodes(nodes: any[]): void {
       if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
         node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
       }
-      if (Array.isArray(node.content)) fixNodes(node.content);
+      if (Array.isArray(node.content)) {
+        if (node.tag === "ul" || node.tag === "ol" || node.tag === "li") {
+          // Strip whitespace-only text nodes inside lists — <li> handles spacing
+          node.content = node.content.filter(
+            (c: any) => !(typeof c === "string" && !c.trim())
+          );
+        } else {
+          node.content = splitNewlines(node.content);
+        }
+        fixNodes(node.content);
+      }
     }
   }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const fixNodesPlugin = () => (tree: any) => { fixNodes(tree); return tree; };
+const fixNodesPlugin = () => (tree: any) => {
+  const expanded = splitNewlines(tree);
+  tree.length = 0;
+  tree.push(...expanded);
+  fixNodes(tree);
+  return tree;
+};
 
-const plugins = [presetReact(), fixNodesPlugin()];
+const plugins = [normalizePlugin(), presetReact(), fixNodesPlugin()];
 const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "*", "center", "indent"] };
 
 class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { hasError: boolean }> {
