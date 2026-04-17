@@ -1,4 +1,5 @@
-import { Component, type ReactNode } from "react";
+import { Component, useState, useRef, useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import BBobReact from "@bbob/react";
 import presetReact from "@bbob/preset-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -124,32 +125,97 @@ class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: Re
   }
 }
 
+function linkClickHandler(e: React.MouseEvent) {
+  const anchor = (e.target as HTMLElement).closest("a");
+  if (anchor?.href) {
+    e.preventDefault();
+    e.stopPropagation();
+    openUrl(anchor.href).catch(() => {});
+  }
+}
+
+function DescriptionModal({ text, onClose }: { text: string; onClose: () => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 pt-16"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-2xl rounded-lg border border-[var(--teal-dim)]/40 bg-[var(--bg-secondary)] p-5 shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-[var(--accent)]">Description</h3>
+          <button
+            onClick={onClose}
+            className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] leading-none"
+          >
+            ✕
+          </button>
+        </div>
+        <div
+          className="bbcode-description text-[var(--text-secondary)] leading-relaxed space-y-2"
+          onClick={linkClickHandler}
+        >
+          <BBobReact plugins={plugins} options={bbobOptions}>{text}</BBobReact>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 /**
- * Renders a BBCode description string as React elements.
- * Links open in the external browser via Tauri's opener plugin.
+ * Renders a BBCode description string, truncated to 12 lines.
+ * Shows a "Show more" button if truncated, opening a modal with the full text.
  */
 export function BBCodeDescription({ text }: { text: string }) {
+  const [isTruncated, setIsTruncated] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (el) setIsTruncated(el.scrollHeight > el.clientHeight + 2);
+  }, [text]);
+
   const fallback = (
     <p className="text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">{text}</p>
   );
+
   return (
     <BBCodeErrorBoundary fallback={fallback}>
-      <div
-        className="bbcode-description text-[var(--text-secondary)] leading-relaxed space-y-2 overflow-hidden"
-        onClick={(e) => {
-          // Intercept link clicks to open in external browser
-          const target = e.target as HTMLElement;
-          const anchor = target.closest("a");
-          if (anchor?.href) {
-            e.preventDefault();
-            e.stopPropagation();
-            openUrl(anchor.href).catch(() => {});
-          }
-        }}
-      >
-        <BBobReact plugins={plugins} options={bbobOptions}>
-          {text}
-        </BBobReact>
+      <div>
+        <div className="relative">
+          <div
+            ref={containerRef}
+            className="bbcode-description text-[var(--text-secondary)] leading-relaxed space-y-2 overflow-hidden"
+            style={{ maxHeight: "19.5em" }}
+            onClick={linkClickHandler}
+          >
+            <BBobReact plugins={plugins} options={bbobOptions}>{text}</BBobReact>
+          </div>
+          {isTruncated && (
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-16"
+              style={{ background: "linear-gradient(to bottom, transparent, var(--bg-card))" }}
+            />
+          )}
+        </div>
+        {isTruncated && (
+          <button
+            onClick={(e) => { e.stopPropagation(); setModalOpen(true); }}
+            className="mt-1 text-xs text-[var(--teal)] hover:underline"
+          >
+            Show full description
+          </button>
+        )}
+        {modalOpen && <DescriptionModal text={text} onClose={() => setModalOpen(false)} />}
       </div>
     </BBCodeErrorBoundary>
   );
