@@ -84,6 +84,29 @@ function fixNodes(nodes: any[]): void {
         node.tag = "span";
         node.attrs = { style: { fontSize: clampFontSize(String(sizeVal)) } };
       }
+      // Convert [indent] to a div with padding
+      if (node.tag === "indent") {
+        const level = parseFloat(String(Object.keys(node.attrs || {})[0] || "1")) || 1;
+        node.tag = "div";
+        node.attrs = { style: { paddingLeft: `${Math.min(level, 6) * 1.5}em` } };
+      }
+      // Convert [spoiler] / [spoiler=Title] to <details><summary>
+      if (node.tag === "spoiler") {
+        const title = Object.keys(node.attrs || {})[0] || "Spoiler";
+        node.tag = "details";
+        node.attrs = {};
+        node.content = [{ tag: "summary", attrs: {}, content: [title] }, ...(node.content || [])];
+      }
+      // Convert [youtube]ID_OR_URL[/youtube] to a clickable link
+      if (node.tag === "youtube") {
+        const raw = (node.content || []).filter((c: any) => typeof c === "string").join("").trim();
+        const idMatch = raw.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+        const videoId = idMatch ? idMatch[1] : raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
+        const href = `https://www.youtube.com/watch?v=${videoId}`;
+        node.tag = "a";
+        node.attrs = { href, class: "youtube-link" };
+        node.content = ["▶ Watch on YouTube"];
+      }
       // Clamp fontSize in style objects from preset-react
       if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
         node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
@@ -113,7 +136,7 @@ const fixNodesPlugin = () => (tree: any) => {
 };
 
 const plugins = [normalizePlugin(), presetReact(), fixNodesPlugin()];
-const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "*", "center", "indent"] };
+const bbobOptions = { onlyAllowTags: ["b", "i", "u", "s", "size", "font", "color", "url", "img", "code", "quote", "list", "*", "center", "indent", "spoiler", "youtube"] };
 
 class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };

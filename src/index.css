@@ -70,3 +70,37 @@ body {
 .bbcode-description li {
   margin: 2px 0;
 }
+.bbcode-description details {
+  border: 1px solid rgba(26, 138, 110, 0.3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  margin: 4px 0;
+}
+.bbcode-description summary {
+  cursor: pointer;
+  color: var(--teal);
+  font-size: 0.85em;
+  user-select: none;
+}
+.bbcode-description summary:hover {
+  color: var(--accent);
+}
+.bbcode-description details[open] summary {
+  margin-bottom: 6px;
+}
+.bbcode-description a.youtube-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(255, 0, 0, 0.15);
+  border: 1px solid rgba(255, 0, 0, 0.3);
+  border-radius: 4px;
+  padding: 2px 8px;
+  color: #ff6b6b;
+  text-decoration: none;
+  font-size: 0.85em;
+}
+.bbcode-description a.youtube-link:hover {
+  background: rgba(255, 0, 0, 0.25);
+  color: #ff8c8c;
+}
