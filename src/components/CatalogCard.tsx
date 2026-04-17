@@ -58,16 +58,15 @@ export function CatalogCard({
 
   return (
     <div
-      className={`cursor-pointer rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
+      className={`rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
         staleness === "error"
           ? "border-red-500/20"
           : staleness === "warning"
             ? "border-yellow-500/20"
             : "border-[var(--teal-dim)]/20"
       }`}
-      onClick={() => setExpanded(!expanded)}
     >
-      <div className="flex items-start justify-between">
+      <div className="flex cursor-pointer items-start justify-between" onClick={() => setExpanded(!expanded)}>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-medium">{addon.name}</span>
@@ -153,11 +152,8 @@ export function CatalogCard({
             )}
             {addon.file_info_url && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openUrl(addon.file_info_url!).catch(() => {});
-                }}
-                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+                onClick={() => openUrl(addon.file_info_url!).catch(() => {})}
+                className="inline-flex cursor-pointer items-center gap-1 text-[var(--teal)] hover:underline"
               >
                 <ExternalLinkIcon />
                 ESOUI Page
@@ -165,11 +161,8 @@ export function CatalogCard({
             )}
             {metadata?.donation_link && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openUrl(metadata.donation_link!).catch(() => {});
-                }}
-                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+                onClick={() => openUrl(metadata.donation_link!).catch(() => {})}
+                className="inline-flex cursor-pointer items-center gap-1 text-[var(--accent)] hover:underline"
               >
                 Support Author
               </button>
@@ -188,10 +181,7 @@ export function CatalogCard({
                         src={thumb}
                         alt="Screenshot"
                         className="h-16 w-auto rounded border border-white/10 cursor-pointer hover:border-[var(--teal)]/50 transition"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openUrl(fullImgs[i] || thumb).catch(() => {});
-                        }}
+                        onClick={() => openUrl(fullImgs[i] || thumb).catch(() => {})}
                       />
                     ))}
                   </div>

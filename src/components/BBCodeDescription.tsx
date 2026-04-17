@@ -129,7 +129,6 @@ function linkClickHandler(e: React.MouseEvent) {
   const anchor = (e.target as HTMLElement).closest("a");
   if (anchor?.href) {
     e.preventDefault();
-    e.stopPropagation();
     openUrl(anchor.href).catch(() => {});
   }
 }
@@ -209,8 +208,8 @@ export function BBCodeDescription({ text }: { text: string }) {
         </div>
         {isTruncated && (
           <button
-            onClick={(e) => { e.stopPropagation(); setModalOpen(true); }}
-            className="mt-1 text-xs text-[var(--teal)] hover:underline"
+            onClick={() => setModalOpen(true)}
+            className="mt-1 cursor-pointer text-xs text-[var(--teal)] hover:underline"
           >
             Show full description
           </button>

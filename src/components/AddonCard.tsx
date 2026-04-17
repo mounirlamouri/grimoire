@@ -74,7 +74,7 @@ export function AddonCard({
 
   return (
     <div
-      className={`cursor-pointer rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
+      className={`rounded-lg border bg-[var(--bg-card)] p-3 transition hover:border-[var(--teal-dim)]/40 ${
         hasMissingDeps || staleness === "error"
           ? "border-red-500/20"
           : staleness === "warning"
@@ -83,9 +83,8 @@ export function AddonCard({
               ? "border-[var(--accent)]/30"
               : "border-[var(--teal-dim)]/20"
       }`}
-      onClick={() => setExpanded(!expanded)}
     >
-      <div className="flex items-start justify-between">
+      <div className="flex cursor-pointer items-start justify-between" onClick={() => setExpanded(!expanded)}>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="font-medium">{addon.title}</span>
@@ -207,11 +206,8 @@ export function AddonCard({
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--text-secondary)]">
             {addonPath ? (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  revealItemInDir(`${addonPath}/${addon.dir_name}`).catch(() => {});
-                }}
-                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+                onClick={() => revealItemInDir(`${addonPath}/${addon.dir_name}`).catch(() => {})}
+                className="inline-flex cursor-pointer items-center gap-1 text-[var(--teal)] hover:underline"
                 aria-label={`Open ${addon.dir_name} folder`}
               >
                 <FolderIcon />
@@ -228,11 +224,8 @@ export function AddonCard({
             )}
             {fileInfoUrl && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openUrl(fileInfoUrl).catch(() => {});
-                }}
-                className="inline-flex items-center gap-1 text-[var(--teal)] hover:underline"
+                onClick={() => openUrl(fileInfoUrl).catch(() => {})}
+                className="inline-flex cursor-pointer items-center gap-1 text-[var(--teal)] hover:underline"
               >
                 <ExternalLinkIcon />
                 ESOUI Page
@@ -240,11 +233,8 @@ export function AddonCard({
             )}
             {metadata?.donation_link && (
               <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  openUrl(metadata.donation_link!).catch(() => {});
-                }}
-                className="inline-flex items-center gap-1 text-[var(--accent)] hover:underline"
+                onClick={() => openUrl(metadata.donation_link!).catch(() => {})}
+                className="inline-flex cursor-pointer items-center gap-1 text-[var(--accent)] hover:underline"
               >
                 Support Author
               </button>
@@ -263,10 +253,7 @@ export function AddonCard({
                         src={thumb}
                         alt="Screenshot"
                         className="h-16 w-auto rounded border border-white/10 cursor-pointer hover:border-[var(--teal)]/50 transition"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          openUrl(fullImgs[i] || thumb).catch(() => {});
-                        }}
+                        onClick={() => openUrl(fullImgs[i] || thumb).catch(() => {})}
                       />
                     ))}
                   </div>
@@ -315,7 +302,6 @@ export function AddonCard({
       {confirmingUninstall && (
         <div
           className="mt-3 flex items-center justify-between rounded border border-red-500/30 bg-red-500/5 p-3"
-          onClick={(e) => e.stopPropagation()}
         >
           <span className="text-sm text-[var(--text-primary)]">
             Uninstall <strong>{addon.title}</strong>?
