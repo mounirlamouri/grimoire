@@ -83,32 +83,29 @@ function fixNodes(nodes: any[]): void {
         const sizeVal = node.attrs?.[node.tag] || Object.keys(node.attrs || {})[0] || "3";
         node.tag = "span";
         node.attrs = { style: { fontSize: clampFontSize(String(sizeVal)) } };
-      }
-      // Convert [indent] to a div with padding
-      if (node.tag === "indent") {
+      } else if (node.tag === "indent") {
+        // Convert [indent] to a div with padding
         const level = parseFloat(String(Object.keys(node.attrs || {})[0] || "1")) || 1;
         node.tag = "div";
         node.attrs = { style: { paddingLeft: `${Math.min(level, 6) * 1.5}em` } };
-      }
-      // Convert [spoiler] / [spoiler=Title] to <details><summary>
-      if (node.tag === "spoiler") {
+      } else if (node.tag === "spoiler") {
+        // Convert [spoiler] / [spoiler=Title] to <details><summary>
         const title = Object.keys(node.attrs || {})[0] || "Spoiler";
         node.tag = "details";
         node.attrs = {};
         node.content = [{ tag: "summary", attrs: {}, content: [title] }, ...(node.content || [])];
-      }
-      // Convert [youtube]ID_OR_URL[/youtube] to a clickable link
-      if (node.tag === "youtube") {
+      } else if (node.tag === "youtube") {
+        // Convert [youtube]ID_OR_URL[/youtube] to a clickable link
         const raw = (node.content || []).filter((c: any) => typeof c === "string").join("").trim();
-        const idMatch = raw.match(/(?:v=|youtu\.be\/|embed\/)([a-zA-Z0-9_-]{11})/);
+        const idMatch = raw.match(/(?:v=|youtu\.be\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})/);
         const videoId = idMatch ? idMatch[1] : raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
         const href = `https://www.youtube.com/watch?v=${videoId}`;
         node.tag = "a";
         node.attrs = { href, class: "youtube-link" };
         node.content = ["▶ Watch on YouTube"];
-      }
-      // Clamp fontSize in style objects from preset-react
-      if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
+      } else if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
+        // Clamp fontSize in style objects from preset-react (must be else-if to avoid
+        // re-clamping a fontSize we just set above, which would corrupt the value)
         node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
       }
       if (Array.isArray(node.content)) {
@@ -201,11 +198,17 @@ export function BBCodeDescription({ text }: { text: string }) {
   const [isTruncated, setIsTruncated] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const showMoreRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const el = containerRef.current;
     if (el) setIsTruncated(el.scrollHeight > el.clientHeight + 2);
   }, [text]);
+
+  const handleClose = () => {
+    setModalOpen(false);
+    showMoreRef.current?.focus();
+  };
 
   const fallback = (
     <p className="text-[var(--text-secondary)] leading-relaxed whitespace-pre-wrap">{text}</p>
@@ -231,13 +234,14 @@ export function BBCodeDescription({ text }: { text: string }) {
         </div>
         {isTruncated && (
           <button
+            ref={showMoreRef}
             onClick={() => setModalOpen(true)}
             className="mt-1 cursor-pointer text-xs text-[var(--teal)] hover:underline"
           >
             Show full description
           </button>
         )}
-        {modalOpen && <DescriptionModal text={text} onClose={() => setModalOpen(false)} />}
+        {modalOpen && <DescriptionModal text={text} onClose={handleClose} />}
       </div>
     </BBCodeErrorBoundary>
   );

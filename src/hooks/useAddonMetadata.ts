@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { AddonMetadata } from "../types/addon";
 
 /**
@@ -64,6 +65,25 @@ export function useAddonMetadata() {
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
+  // Clear in-memory cache when catalog sync completes so stale descriptions refresh
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    listen<{ stage: string }>("catalog-sync-progress", (event) => {
+      if (event.payload.stage === "done") {
+        setMetadataMap(new Map());
+        pendingRef.current.clear();
+      }
+    }).then((fn) => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 

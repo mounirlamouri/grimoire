@@ -179,7 +179,7 @@ export function CatalogCard({
                       <img
                         key={thumb}
                         src={thumb}
-                        alt="Screenshot"
+                        alt={`Screenshot ${i + 1}`}
                         className="h-16 w-auto rounded border border-white/10 cursor-pointer hover:border-[var(--teal)]/50 transition"
                         onClick={() => openUrl(fullImgs[i] || thumb).catch(() => {})}
                       />
