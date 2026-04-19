@@ -203,8 +203,11 @@ pub async fn fetch_addon_metadata(
 
     // Step 2: Fetch stale/missing UIDs from API
     if !uids_to_fetch.is_empty() {
-        let mut client = EsoUiClient::new();
-        client.init().await?;
+        let client_state = app_handle.state::<tokio::sync::Mutex<EsoUiClient>>();
+        let mut client = client_state.lock().await;
+        if !client.is_initialized() {
+            client.init().await?;
+        }
 
         // Fetch sequentially with a small batch to be polite to the API
         let mut fetched = Vec::new();

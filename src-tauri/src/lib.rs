@@ -34,6 +34,7 @@ pub fn run() {
             let conn = db::open_db(&db_path)
                 .expect("failed to open catalog database");
             app.manage(Mutex::new(conn));
+            app.manage(tokio::sync::Mutex::new(esoui::api::EsoUiClient::new()));
 
             tray::create_tray(app)?;
 

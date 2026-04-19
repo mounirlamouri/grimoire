@@ -57,6 +57,10 @@ impl EsoUiClient {
         Ok(())
     }
 
+    pub fn is_initialized(&self) -> bool {
+        self.api_feeds.is_some()
+    }
+
     fn feeds(&self) -> Result<&ApiFeeds, String> {
         self.api_feeds
             .as_ref()
@@ -127,6 +131,12 @@ mod tests {
     fn test_new_client_not_initialized() {
         let client = EsoUiClient::new();
         assert!(client.api_feeds.is_none());
+    }
+
+    #[test]
+    fn client_is_not_initialized_before_init() {
+        let client = EsoUiClient::new();
+        assert!(!client.is_initialized());
     }
 
     #[test]
