@@ -252,4 +252,85 @@ mod tests {
         assert_eq!(details[0].ui_version, Some("3.0".to_string()));
         assert_eq!(details[0].ui_dir, Some("DetailAddon".to_string()));
     }
+
+    /// Realistic payload that mirrors the per-addon ESOUI FileDetails response,
+    /// exercising every metadata field added for the card-expand feature.
+    /// UIDate arrives as a number (ms), UIDonationLink as a bare string,
+    /// UICompatibility/UISiblings as arrays, and UIIMG_Thumbs/UIIMGs as string arrays.
+    #[test]
+    fn test_deserialize_addon_details_with_metadata_fields() {
+        let json = r#"[{
+            "UID": "100",
+            "UIName": "Full Metadata",
+            "UIVersion": "1.2.3",
+            "UIAuthorName": "Author",
+            "UIDescription": "Desc with [b]bbcode[/b]",
+            "UIDownload": "https://example.com/a.zip",
+            "UIDir": "FullMeta",
+            "UIDownloadTotal": "1000",
+            "UIDate": 1700000000000,
+            "UICompatibility": [
+                { "version": "101047", "name": "U43 Update" },
+                { "version": "101046", "name": "U42 Update" }
+            ],
+            "UIDonationLink": "https://donate.example.com/author",
+            "UIIMG_Thumbs": ["https://cdn.example.com/t1.png", "https://cdn.example.com/t2.png"],
+            "UIIMGs": ["https://cdn.example.com/full1.png", "https://cdn.example.com/full2.png"],
+            "UISiblings": [{ "UID": "101", "UIName": "Sibling Addon" }]
+        }]"#;
+
+        let details: Vec<AddonDetails> = serde_json::from_str(json).unwrap();
+        assert_eq!(details.len(), 1);
+        let d = &details[0];
+
+        // UIDate comes through as a Value::Number and exposes as_i64
+        assert_eq!(d.ui_date.as_ref().and_then(|v| v.as_i64()), Some(1700000000000));
+
+        // UICompatibility is an array of objects — preserved as Value
+        let compat = d.ui_compatibility.as_ref().expect("compatibility present");
+        assert!(compat.is_array());
+        assert_eq!(compat.as_array().unwrap().len(), 2);
+
+        // UIDonationLink arrives as a bare string on real API responses
+        assert_eq!(
+            d.ui_donation_link.as_ref().and_then(|v| v.as_str()),
+            Some("https://donate.example.com/author")
+        );
+
+        assert_eq!(d.ui_img_thumbs.as_ref().map(|v| v.len()), Some(2));
+        assert_eq!(d.ui_imgs.as_ref().map(|v| v.len()), Some(2));
+        assert!(d.ui_siblings.as_ref().map(|v| v.is_array()).unwrap_or(false));
+    }
+
+    /// UIDonationLink frequently arrives as null — verify the Option<Value>
+    /// deserializes as None rather than panicking.
+    #[test]
+    fn test_deserialize_addon_details_null_optional_metadata() {
+        let json = r#"[{
+            "UID": "200",
+            "UIName": "Sparse",
+            "UIVersion": null,
+            "UIAuthorName": null,
+            "UIDescription": null,
+            "UIDownload": null,
+            "UIDir": null,
+            "UIDownloadTotal": null,
+            "UIDate": null,
+            "UICompatibility": null,
+            "UIDonationLink": null,
+            "UIIMG_Thumbs": null,
+            "UIIMGs": null,
+            "UISiblings": null
+        }]"#;
+
+        let details: Vec<AddonDetails> = serde_json::from_str(json).unwrap();
+        let d = &details[0];
+        assert_eq!(d.uid, "200");
+        assert!(d.ui_date.is_none());
+        assert!(d.ui_compatibility.is_none());
+        assert!(d.ui_donation_link.is_none());
+        assert!(d.ui_img_thumbs.is_none());
+        assert!(d.ui_imgs.is_none());
+        assert!(d.ui_siblings.is_none());
+    }
 }

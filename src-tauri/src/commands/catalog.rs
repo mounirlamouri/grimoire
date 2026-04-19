@@ -3,6 +3,7 @@ use crate::commands::updates::{bootstrap_untracked, compute_updates};
 use crate::config::{paths, settings};
 use crate::db::{self, CatalogAddon};
 use crate::esoui::api::EsoUiClient;
+use crate::esoui::models::AddonDetails;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -196,25 +197,7 @@ pub async fn fetch_addon_metadata(
         let cached = db::get_cached_metadata_batch(&conn, &uids)?;
         let catalog_dates = db::get_catalog_dates_by_uids(&conn, &uids)?;
 
-        uids_to_fetch = uids
-            .iter()
-            .filter(|uid| {
-                match cached.get(*uid) {
-                    Some(meta) => {
-                        // Stale if catalog date differs from cached ui_date
-                        let catalog_date = catalog_dates.get(*uid);
-                        match (meta.ui_date, catalog_date) {
-                            (Some(cached_date), Some(&current_date)) => cached_date != current_date,
-                            (None, Some(_)) => true, // cached without date, but catalog has one
-                            _ => false,              // no catalog date = can't determine staleness
-                        }
-                    }
-                    None => true, // not cached at all
-                }
-            })
-            .cloned()
-            .collect();
-
+        uids_to_fetch = filter_stale_uids(&uids, &cached, &catalog_dates);
         result = cached;
     }
 
@@ -246,44 +229,18 @@ pub async fn fetch_addon_metadata(
         let now = chrono::Utc::now().timestamp();
 
         for details in &fetched {
-            let ui_date = details.ui_date.as_ref().and_then(|v| v.as_i64());
-            let compatibility = details
-                .ui_compatibility
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
-            let donation_link = details
-                .ui_donation_link
-                .as_ref()
-                .and_then(|v| v.as_str().map(|s| s.to_string()))
-                .or_else(|| {
-                    details
-                        .ui_donation_link
-                        .as_ref()
-                        .map(|v| serde_json::to_string(v).unwrap_or_default())
-                });
-            let img_thumbs = details
-                .ui_img_thumbs
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
-            let imgs = details
-                .ui_imgs
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
-            let siblings = details
-                .ui_siblings
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
+            let s = serialize_details_for_db(details);
 
             db::upsert_metadata(
                 &conn,
                 &details.uid,
                 details.ui_description.as_deref(),
-                compatibility.as_deref(),
-                donation_link.as_deref(),
-                img_thumbs.as_deref(),
-                imgs.as_deref(),
-                siblings.as_deref(),
-                ui_date,
+                s.compatibility.as_deref(),
+                s.donation_link.as_deref(),
+                s.img_thumbs.as_deref(),
+                s.imgs.as_deref(),
+                s.siblings.as_deref(),
+                s.ui_date,
                 now,
             )?;
 
@@ -292,12 +249,12 @@ pub async fn fetch_addon_metadata(
                 db::AddonMetadata {
                     uid: details.uid.clone(),
                     description: details.ui_description.clone(),
-                    compatibility,
-                    donation_link,
-                    img_thumbs,
-                    imgs,
-                    siblings,
-                    ui_date,
+                    compatibility: s.compatibility,
+                    donation_link: s.donation_link,
+                    img_thumbs: s.img_thumbs,
+                    imgs: s.imgs,
+                    siblings: s.siblings,
+                    ui_date: s.ui_date,
                     fetched_at: now,
                 },
             );
@@ -305,6 +262,55 @@ pub async fn fetch_addon_metadata(
     }
 
     Ok(result)
+}
+
+/// Columns derived from an `AddonDetails` ready for SQLite storage.
+/// Array/object fields are JSON-serialized; `donation_link` prefers the raw
+/// string form when the API returns it that way, falling back to JSON for
+/// non-string values.
+pub(crate) struct SerializedMetadata {
+    pub ui_date: Option<i64>,
+    pub compatibility: Option<String>,
+    pub donation_link: Option<String>,
+    pub img_thumbs: Option<String>,
+    pub imgs: Option<String>,
+    pub siblings: Option<String>,
+}
+
+pub(crate) fn serialize_details_for_db(details: &AddonDetails) -> SerializedMetadata {
+    let json_string = |v: &serde_json::Value| serde_json::to_string(v).unwrap_or_default();
+    SerializedMetadata {
+        ui_date: details.ui_date.as_ref().and_then(|v| v.as_i64()),
+        compatibility: details.ui_compatibility.as_ref().map(json_string),
+        donation_link: details
+            .ui_donation_link
+            .as_ref()
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .or_else(|| details.ui_donation_link.as_ref().map(json_string)),
+        img_thumbs: details.ui_img_thumbs.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+        imgs: details.ui_imgs.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
+        siblings: details.ui_siblings.as_ref().map(json_string),
+    }
+}
+
+/// Returns which UIDs from `uids` need to be fetched (not cached, or stale).
+/// A cached entry is stale when the catalog date differs from the stored ui_date.
+pub(crate) fn filter_stale_uids(
+    uids: &[String],
+    cached: &std::collections::HashMap<String, db::AddonMetadata>,
+    catalog_dates: &std::collections::HashMap<String, i64>,
+) -> Vec<String> {
+    uids.iter()
+        .filter(|uid| match cached.get(*uid) {
+            Some(meta) => match (meta.ui_date, catalog_dates.get(*uid)) {
+                (Some(cached_date), Some(&current_date)) => cached_date != current_date,
+                (None, Some(_)) => true,
+                _ => false,
+            },
+            None => true,
+        })
+        .cloned()
+        .collect()
 }
 
 /// Resolve directory names to UIDs (for installed addons that need metadata).
@@ -319,4 +325,209 @@ pub fn resolve_uids(
         .map_err(|e| format!("DB lock error: {}", e))?;
 
     db::lookup_uids_by_dir_names(&conn, &dir_names)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_meta(ui_date: Option<i64>) -> db::AddonMetadata {
+        db::AddonMetadata {
+            uid: "test".to_string(),
+            description: None,
+            compatibility: None,
+            donation_link: None,
+            img_thumbs: None,
+            imgs: None,
+            siblings: None,
+            ui_date,
+            fetched_at: 0,
+        }
+    }
+
+    #[test]
+    fn not_cached_always_needs_fetch() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::new();
+        let catalog_dates = HashMap::new();
+        assert_eq!(filter_stale_uids(&uids, &cached, &catalog_dates), vec!["A"]);
+    }
+
+    #[test]
+    fn cached_with_matching_date_is_fresh() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::from([("A".to_string(), make_meta(Some(1000)))]);
+        let catalog_dates = HashMap::from([("A".to_string(), 1000i64)]);
+        assert!(filter_stale_uids(&uids, &cached, &catalog_dates).is_empty());
+    }
+
+    #[test]
+    fn cached_with_different_date_is_stale() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::from([("A".to_string(), make_meta(Some(1000)))]);
+        let catalog_dates = HashMap::from([("A".to_string(), 2000i64)]);
+        assert_eq!(filter_stale_uids(&uids, &cached, &catalog_dates), vec!["A"]);
+    }
+
+    #[test]
+    fn cached_without_date_but_catalog_has_date_is_stale() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::from([("A".to_string(), make_meta(None))]);
+        let catalog_dates = HashMap::from([("A".to_string(), 1000i64)]);
+        assert_eq!(filter_stale_uids(&uids, &cached, &catalog_dates), vec!["A"]);
+    }
+
+    #[test]
+    fn cached_without_date_and_no_catalog_date_is_fresh() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::from([("A".to_string(), make_meta(None))]);
+        let catalog_dates = HashMap::new();
+        assert!(filter_stale_uids(&uids, &cached, &catalog_dates).is_empty());
+    }
+
+    #[test]
+    fn cached_with_date_but_no_catalog_date_is_fresh() {
+        let uids = vec!["A".to_string()];
+        let cached = HashMap::from([("A".to_string(), make_meta(Some(1000)))]);
+        let catalog_dates = HashMap::new();
+        assert!(filter_stale_uids(&uids, &cached, &catalog_dates).is_empty());
+    }
+
+    #[test]
+    fn empty_uids_returns_empty() {
+        let cached = HashMap::from([("A".to_string(), make_meta(Some(1000)))]);
+        let catalog_dates = HashMap::from([("A".to_string(), 1000i64)]);
+        assert!(filter_stale_uids(&[], &cached, &catalog_dates).is_empty());
+    }
+
+    #[test]
+    fn mixed_batch_returns_only_stale_and_missing() {
+        let uids = vec!["fresh".to_string(), "stale".to_string(), "missing".to_string()];
+        let cached = HashMap::from([
+            ("fresh".to_string(), make_meta(Some(100))),
+            ("stale".to_string(), make_meta(Some(100))),
+        ]);
+        let catalog_dates = HashMap::from([
+            ("fresh".to_string(), 100i64),
+            ("stale".to_string(), 200i64),
+        ]);
+        let mut result = filter_stale_uids(&uids, &cached, &catalog_dates);
+        result.sort();
+        assert_eq!(result, vec!["missing", "stale"]);
+    }
+
+    // ---- serialize_details_for_db ----
+
+    fn details_from_json(json: &str) -> AddonDetails {
+        serde_json::from_str(json).expect("valid AddonDetails JSON")
+    }
+
+    fn empty_details_json() -> &'static str {
+        r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": null, "UICompatibility": null, "UIDonationLink": null,
+            "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
+        }"#
+    }
+
+    #[test]
+    fn serialize_extracts_ui_date_as_i64() {
+        let json = r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": 1700000000000,
+            "UICompatibility": null, "UIDonationLink": null,
+            "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
+        }"#;
+        let s = serialize_details_for_db(&details_from_json(json));
+        assert_eq!(s.ui_date, Some(1700000000000));
+    }
+
+    #[test]
+    fn serialize_all_none_when_details_are_null() {
+        let s = serialize_details_for_db(&details_from_json(empty_details_json()));
+        assert!(s.ui_date.is_none());
+        assert!(s.compatibility.is_none());
+        assert!(s.donation_link.is_none());
+        assert!(s.img_thumbs.is_none());
+        assert!(s.imgs.is_none());
+        assert!(s.siblings.is_none());
+    }
+
+    #[test]
+    fn serialize_donation_link_preserves_bare_string() {
+        // When the API returns UIDonationLink as a bare JSON string, we want
+        // the raw URL stored — not a JSON-quoted version of it.
+        let json = r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": null, "UICompatibility": null,
+            "UIDonationLink": "https://donate.example.com/author",
+            "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
+        }"#;
+        let s = serialize_details_for_db(&details_from_json(json));
+        assert_eq!(s.donation_link.as_deref(), Some("https://donate.example.com/author"));
+    }
+
+    #[test]
+    fn serialize_donation_link_falls_back_to_json_for_non_string_values() {
+        // Defensive path: if the API ever returns UIDonationLink as a non-string
+        // (object/number), we fall back to a JSON string rather than losing the data.
+        let json = r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": null, "UICompatibility": null,
+            "UIDonationLink": { "url": "https://x.com", "kind": "paypal" },
+            "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
+        }"#;
+        let s = serialize_details_for_db(&details_from_json(json));
+        let got = s.donation_link.expect("fallback should produce JSON");
+        assert!(got.contains("\"url\""));
+        assert!(got.contains("paypal"));
+    }
+
+    #[test]
+    fn serialize_compatibility_encodes_array_as_json() {
+        let json = r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": null,
+            "UICompatibility": [
+                { "version": "101047", "name": "U43" }
+            ],
+            "UIDonationLink": null,
+            "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
+        }"#;
+        let s = serialize_details_for_db(&details_from_json(json));
+        let compat = s.compatibility.expect("compatibility serialized");
+        // Round-trip: the stored string parses back to the original array shape.
+        let parsed: serde_json::Value = serde_json::from_str(&compat).unwrap();
+        assert!(parsed.is_array());
+        assert_eq!(parsed[0]["version"], "101047");
+    }
+
+    #[test]
+    fn serialize_img_arrays_encode_as_json_strings() {
+        let json = r#"{
+            "UID": "1", "UIName": "X",
+            "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
+            "UIDownload": null, "UIDir": null, "UIDownloadTotal": null,
+            "UIDate": null, "UICompatibility": null, "UIDonationLink": null,
+            "UIIMG_Thumbs": ["https://cdn/a.png", "https://cdn/b.png"],
+            "UIIMGs": ["https://cdn/full.png"],
+            "UISiblings": null
+        }"#;
+        let s = serialize_details_for_db(&details_from_json(json));
+        let thumbs: Vec<String> = serde_json::from_str(s.img_thumbs.as_deref().unwrap()).unwrap();
+        assert_eq!(thumbs.len(), 2);
+        let imgs: Vec<String> = serde_json::from_str(s.imgs.as_deref().unwrap()).unwrap();
+        assert_eq!(imgs, vec!["https://cdn/full.png".to_string()]);
+    }
 }
