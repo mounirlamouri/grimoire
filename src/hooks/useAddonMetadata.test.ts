@@ -221,3 +221,43 @@ describe("useAddonMetadata cache invalidation", () => {
     expect(result.current.metadataMap.size).toBe(0);
   });
 });
+
+describe("useAddonMetadata in-flight fetch after cache clear", () => {
+  it("discards fetch results when catalog sync fires during an in-flight request", async () => {
+    const { listen } = await import("@tauri-apps/api/event");
+    const mockListen = listen as ReturnType<typeof vi.fn>;
+
+    let capturedCallback: ((event: { payload: { stage: string } }) => void) | null = null;
+    mockListen.mockImplementation((_event: string, cb: (event: { payload: { stage: string } }) => void) => {
+      capturedCallback = cb;
+      return Promise.resolve(() => {});
+    });
+
+    let resolveInvoke: (value: Record<string, unknown>) => void = () => {};
+    mockInvoke.mockImplementationOnce(
+      () => new Promise((resolve) => { resolveInvoke = resolve; })
+    );
+
+    const { result } = renderHook(() => useAddonMetadata());
+
+    act(() => {
+      result.current.fetchMetadata("abc");
+    });
+
+    await act(async () => {
+      vi.advanceTimersByTime(100);
+    });
+
+    act(() => {
+      capturedCallback!({ payload: { stage: "done" } });
+    });
+
+    const staleMeta = { uid: "abc", description: "stale", compatibility: null, donation_link: null, img_thumbs: null, imgs: null, siblings: null, ui_date: null, fetched_at: 0 };
+    await act(async () => {
+      resolveInvoke({ abc: staleMeta });
+      await vi.runAllTimersAsync();
+    });
+
+    expect(result.current.metadataMap.has("abc")).toBe(false);
+  });
+});

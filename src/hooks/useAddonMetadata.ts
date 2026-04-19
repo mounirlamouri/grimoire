@@ -13,11 +13,14 @@ export function useAddonMetadata() {
   const [loadingUids, setLoadingUids] = useState<Set<string>>(new Set());
   const pendingRef = useRef<Set<string>>(new Set());
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cacheEpochRef = useRef(0);
 
   const flush = useCallback(async () => {
     const uids = [...pendingRef.current];
     pendingRef.current.clear();
     if (uids.length === 0) return;
+
+    const epochAtStart = cacheEpochRef.current;
 
     setLoadingUids((prev) => {
       const next = new Set(prev);
@@ -30,6 +33,7 @@ export function useAddonMetadata() {
         "fetch_addon_metadata",
         { uids }
       );
+      if (cacheEpochRef.current !== epochAtStart) return;
       setMetadataMap((prev) => {
         const next = new Map(prev);
         for (const [uid, meta] of Object.entries(result)) {
@@ -74,6 +78,7 @@ export function useAddonMetadata() {
     let unlisten: (() => void) | undefined;
     listen<{ stage: string }>("catalog-sync-progress", (event) => {
       if (event.payload.stage === "done") {
+        cacheEpochRef.current += 1;
         setMetadataMap(new Map());
         pendingRef.current.clear();
       }
