@@ -103,10 +103,6 @@ function fixNodes(nodes: any[]): void {
         node.tag = "a";
         node.attrs = { href, className: "youtube-link" };
         node.content = ["▶ Watch on YouTube"];
-      } else if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
-        // Clamp fontSize in style objects from preset-react (must be else-if to avoid
-        // re-clamping a fontSize we just set above, which would corrupt the value)
-        node.attrs.style.fontSize = clampFontSize(node.attrs.style.fontSize);
       }
       if (Array.isArray(node.content)) {
         if (node.tag === "ul" || node.tag === "ol" || node.tag === "li") {
