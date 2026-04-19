@@ -1,16 +1,19 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import { CatalogCard } from "./CatalogCard";
-import type { CatalogAddon } from "../types/addon";
+import type { CatalogAddon, AddonMetadata } from "../types/addon";
 
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
 vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
 }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
 
 import { openUrl } from "@tauri-apps/plugin-opener";
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });
 
 function makeAddon(overrides: Partial<CatalogAddon> = {}): CatalogAddon {
@@ -211,5 +214,130 @@ describe("CatalogCard expanded view", () => {
     );
     fireEvent.click(screen.getByText("Test Catalog Addon"));
     expect(screen.queryByRole("button", { name: /ESOUI Page/ })).not.toBeInTheDocument();
+  });
+});
+
+function makeMetadata(overrides: Partial<AddonMetadata> = {}): AddonMetadata {
+  return {
+    uid: "1",
+    description: null,
+    compatibility: null,
+    donation_link: null,
+    img_thumbs: null,
+    imgs: null,
+    siblings: null,
+    ui_date: null,
+    fetched_at: 0,
+    ...overrides,
+  };
+}
+
+describe("CatalogCard metadata rendering", () => {
+  it("shows description from metadata when metadata is available and card is expanded", () => {
+    const metadata = makeMetadata({ uid: "1", description: "A fantastic catalog addon" });
+    render(
+      <CatalogCard
+        addon={makeAddon()}
+        {...defaultProps}
+        metadata={metadata}
+        metadataLoading={false}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(screen.getByText("A fantastic catalog addon")).toBeInTheDocument();
+  });
+
+  it("shows 'Loading details...' when UID is loading and metadata is not yet available", () => {
+    render(
+      <CatalogCard
+        addon={makeAddon()}
+        {...defaultProps}
+        metadata={undefined}
+        metadataLoading={true}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(screen.getByText("Loading details...")).toBeInTheDocument();
+  });
+
+  it("does not show 'Loading details...' when metadata is already available even if loading flag is set", () => {
+    const metadata = makeMetadata({ uid: "1", description: "Already here" });
+    render(
+      <CatalogCard
+        addon={makeAddon()}
+        {...defaultProps}
+        metadata={metadata}
+        metadataLoading={true}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(screen.queryByText("Loading details...")).not.toBeInTheDocument();
+    expect(screen.getByText("Already here")).toBeInTheDocument();
+  });
+
+  it("renders compatibility badges from JSON-encoded metadata.compatibility", () => {
+    const metadata = makeMetadata({
+      compatibility: JSON.stringify([
+        { version: "101047", name: "U43 Secrets" },
+        { version: "101046", name: "" },
+      ]),
+    });
+    render(<CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />);
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(screen.getByText("U43 Secrets")).toBeInTheDocument();
+    expect(screen.getByText("101046")).toBeInTheDocument();
+  });
+
+  it("does not throw when compatibility JSON is malformed", () => {
+    const metadata = makeMetadata({ compatibility: "{not valid json" });
+    render(<CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />);
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(screen.getByText("Test Catalog Addon")).toBeInTheDocument();
+  });
+
+  it("renders 'Support Author' button wired to donation_link", () => {
+    const metadata = makeMetadata({ donation_link: "https://donate.example.com/y" });
+    render(<CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />);
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    fireEvent.click(screen.getByRole("button", { name: /Support Author/ }));
+    expect(openUrl).toHaveBeenCalledWith("https://donate.example.com/y");
+  });
+
+  it("renders screenshot thumbnails and opens full-size on click", () => {
+    const metadata = makeMetadata({
+      img_thumbs: JSON.stringify(["https://cdn/t1.png"]),
+      imgs: JSON.stringify(["https://cdn/full1.png"]),
+    });
+    const { container } = render(
+      <CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    const img = container.querySelector("img[alt^='Screenshot']");
+    expect(img).not.toBeNull();
+    fireEvent.click(img!);
+    expect(openUrl).toHaveBeenCalledWith("https://cdn/full1.png");
+  });
+
+  it("falls back to thumb URL when imgs is null", () => {
+    const metadata = makeMetadata({
+      img_thumbs: JSON.stringify(["https://cdn/only-thumb.png"]),
+      imgs: null,
+    });
+    const { container } = render(
+      <CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    const img = container.querySelector("img[alt^='Screenshot']");
+    fireEvent.click(img!);
+    expect(openUrl).toHaveBeenCalledWith("https://cdn/only-thumb.png");
+  });
+
+  it("renders nothing for screenshots when img_thumbs is malformed JSON", () => {
+    const metadata = makeMetadata({ img_thumbs: "not-json" });
+    const { container } = render(
+      <CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />
+    );
+    fireEvent.click(screen.getByText("Test Catalog Addon"));
+    expect(container.querySelector("img[alt^='Screenshot']")).toBeNull();
   });
 });
