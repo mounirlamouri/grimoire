@@ -130,6 +130,13 @@ describe("BBCodeDescription youtube", () => {
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
     );
   });
+
+  it("applies .youtube-link class for styling", () => {
+    const { container } = render(<BBCodeDescription text="[youtube]dQw4w9WgXcQ[/youtube]" />);
+    const anchor = container.querySelector("a");
+    expect(anchor).not.toBeNull();
+    expect(anchor!.classList.contains("youtube-link")).toBe(true);
+  });
 });
 
 describe("BBCodeDescription size", () => {

@@ -101,7 +101,7 @@ function fixNodes(nodes: any[]): void {
         const videoId = idMatch ? idMatch[1] : raw.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 11);
         const href = `https://www.youtube.com/watch?v=${videoId}`;
         node.tag = "a";
-        node.attrs = { href, class: "youtube-link" };
+        node.attrs = { href, className: "youtube-link" };
         node.content = ["▶ Watch on YouTube"];
       } else if (node.attrs?.style && typeof node.attrs.style === "object" && node.attrs.style.fontSize) {
         // Clamp fontSize in style objects from preset-react (must be else-if to avoid
