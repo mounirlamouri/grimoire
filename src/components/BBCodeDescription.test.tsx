@@ -63,6 +63,32 @@ describe("BBCodeDescription url", () => {
   });
 });
 
+describe("BBCodeDescription link click scheme validation", () => {
+  it("does not call openUrl for javascript: scheme", async () => {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    const mockOpen = openUrl as ReturnType<typeof vi.fn>;
+    mockOpen.mockClear();
+    const { container } = render(
+      <BBCodeDescription text="[url=javascript:alert(1)]x[/url]" />
+    );
+    const anchor = container.querySelector("a")!;
+    fireEvent.click(anchor);
+    expect(mockOpen).not.toHaveBeenCalled();
+  });
+
+  it("calls openUrl for https: scheme", async () => {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    const mockOpen = openUrl as ReturnType<typeof vi.fn>;
+    mockOpen.mockClear();
+    const { container } = render(
+      <BBCodeDescription text="[url=https://example.com]x[/url]" />
+    );
+    const anchor = container.querySelector("a")!;
+    fireEvent.click(anchor);
+    expect(mockOpen).toHaveBeenCalledWith("https://example.com/");
+  });
+});
+
 describe("BBCodeDescription spoiler", () => {
   it("renders [spoiler]text[/spoiler] as <details> with default summary", () => {
     const { container } = render(<BBCodeDescription text="[spoiler]secret[/spoiler]" />);

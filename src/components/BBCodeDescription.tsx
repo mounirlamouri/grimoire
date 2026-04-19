@@ -145,12 +145,20 @@ class BBCodeErrorBoundary extends Component<{ children: ReactNode; fallback?: Re
   }
 }
 
+const ALLOWED_SCHEMES = ["http:", "https:", "mailto:"];
+
 function linkClickHandler(e: React.MouseEvent) {
   const anchor = (e.target as HTMLElement).closest("a");
-  if (anchor?.href) {
-    e.preventDefault();
-    openUrl(anchor.href).catch(() => {});
+  if (!anchor?.href) return;
+  e.preventDefault();
+  let parsed: URL;
+  try {
+    parsed = new URL(anchor.href);
+  } catch {
+    return;
   }
+  if (!ALLOWED_SCHEMES.includes(parsed.protocol)) return;
+  openUrl(anchor.href).catch(() => {});
 }
 
 function DescriptionModal({ text, onClose }: { text: string; onClose: () => void }) {
