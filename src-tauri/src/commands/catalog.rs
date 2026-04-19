@@ -265,9 +265,9 @@ pub async fn fetch_addon_metadata(
 }
 
 /// Columns derived from an `AddonDetails` ready for SQLite storage.
-/// Array/object fields are JSON-serialized; `donation_link` prefers the raw
-/// string form when the API returns it that way, falling back to JSON for
-/// non-string values.
+/// Array/object fields are JSON-serialized. `donation_link` is only stored
+/// when the API returns a plain string — non-string shapes are treated as
+/// missing so the UI never surfaces a JSON blob as a clickable URL.
 pub(crate) struct SerializedMetadata {
     pub ui_date: Option<i64>,
     pub compatibility: Option<String>,
@@ -285,8 +285,7 @@ pub(crate) fn serialize_details_for_db(details: &AddonDetails) -> SerializedMeta
         donation_link: details
             .ui_donation_link
             .as_ref()
-            .and_then(|v| v.as_str().map(|s| s.to_string()))
-            .or_else(|| details.ui_donation_link.as_ref().map(json_string)),
+            .and_then(|v| v.as_str().map(|s| s.to_string())),
         img_thumbs: details.ui_img_thumbs.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
         imgs: details.ui_imgs.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default()),
         siblings: details.ui_siblings.as_ref().map(json_string),
@@ -475,9 +474,9 @@ mod tests {
     }
 
     #[test]
-    fn serialize_donation_link_falls_back_to_json_for_non_string_values() {
-        // Defensive path: if the API ever returns UIDonationLink as a non-string
-        // (object/number), we fall back to a JSON string rather than losing the data.
+    fn serialize_donation_link_is_none_for_non_string_values() {
+        // If the API ever returns a non-string donation link, store None rather
+        // than surfacing a JSON blob as a clickable URL.
         let json = r#"{
             "UID": "1", "UIName": "X",
             "UIVersion": null, "UIAuthorName": null, "UIDescription": null,
@@ -487,9 +486,7 @@ mod tests {
             "UIIMG_Thumbs": null, "UIIMGs": null, "UISiblings": null
         }"#;
         let s = serialize_details_for_db(&details_from_json(json));
-        let got = s.donation_link.expect("fallback should produce JSON");
-        assert!(got.contains("\"url\""));
-        assert!(got.contains("paypal"));
+        assert!(s.donation_link.is_none());
     }
 
     #[test]
