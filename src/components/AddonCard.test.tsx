@@ -335,7 +335,7 @@ describe("AddonCard expanded view", () => {
     fireEvent.click(screen.getByText("Test Addon"));
     expect(screen.getByText("A very cool addon")).toBeInTheDocument();
     expect(screen.getByText("AddOnVersion: 42")).toBeInTheDocument();
-    expect(screen.getByText("API: 101047, 101048")).toBeInTheDocument();
+    expect(screen.getByText("U47, U48")).toBeInTheDocument();
     expect(screen.getByText("Depends on:")).toBeInTheDocument();
     expect(screen.getByText("LibAddonMenu-2.0 (>=32)")).toBeInTheDocument();
   });
@@ -368,6 +368,48 @@ describe("AddonCard expanded view", () => {
     render(<AddonCard addon={makeAddon()} {...defaultProps} />);
     fireEvent.click(screen.getByText("Test Addon"));
     expect(screen.queryByRole("button", { name: /ESOUI Page/ })).not.toBeInTheDocument();
+  });
+
+  it("marks API versions as outdated (red) when below current game APIVersion", () => {
+    render(
+      <AddonCard
+        addon={makeAddon({ api_versions: [101047] })}
+        currentApiVersion={101049}
+        {...defaultProps}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Addon"));
+    const span = screen.getByText("U47");
+    expect(span.className).toContain("text-red-400");
+    expect(span.getAttribute("title")).toBe(
+      "APIVersion 101047 — outdated, current is APIVersion 101049"
+    );
+  });
+
+  it("does not color API versions when any declared version matches current", () => {
+    render(
+      <AddonCard
+        addon={makeAddon({ api_versions: [101047, 101049] })}
+        currentApiVersion={101049}
+        {...defaultProps}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Addon"));
+    const span = screen.getByText("U47, U49");
+    expect(span.className).not.toContain("text-red");
+    expect(span.getAttribute("title")).toBe("APIVersion 101047, APIVersion 101049");
+  });
+
+  it("does not mark as outdated when currentApiVersion is missing", () => {
+    render(
+      <AddonCard
+        addon={makeAddon({ api_versions: [101047] })}
+        {...defaultProps}
+      />
+    );
+    fireEvent.click(screen.getByText("Test Addon"));
+    const span = screen.getByText("U47");
+    expect(span.className).not.toContain("text-red");
   });
 });
 
@@ -431,17 +473,17 @@ describe("AddonCard metadata rendering", () => {
   it("renders compatibility badges from JSON-encoded metadata.compatibility", () => {
     const metadata = makeMetadata({
       compatibility: JSON.stringify([
-        { version: "101047", name: "U43 Secrets" },
-        { version: "101046", name: "" },
+        { version: "11.3.0", name: "Season Zero" },
+        { version: "11.2.0", name: "" },
       ]),
     });
     render(
       <AddonCard addon={makeAddon()} {...defaultProps} metadata={metadata} />
     );
     fireEvent.click(screen.getByText("Test Addon"));
-    expect(screen.getByText("U43 Secrets")).toBeInTheDocument();
+    expect(screen.getByText("Season Zero")).toBeInTheDocument();
     // Falls back to version when name is empty
-    expect(screen.getByText("101046")).toBeInTheDocument();
+    expect(screen.getByText("11.2.0")).toBeInTheDocument();
   });
 
   it("does not throw and renders no badges when compatibility JSON is malformed", () => {

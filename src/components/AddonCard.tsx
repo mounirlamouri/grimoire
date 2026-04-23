@@ -3,6 +3,7 @@ import { openUrl, revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { InstalledAddon, AddonUpdate, AddonMetadata, CompatibilityEntry } from "../types/addon";
 import { getStaleness } from "../utils/staleness";
 import { formatRelativeDate } from "../utils/formatDate";
+import { getApiCompatibility, formatUpdateLabel } from "../utils/apiCompatibility";
 import { ExternalLinkIcon } from "./ExternalLinkIcon";
 import { FolderIcon } from "./FolderIcon";
 import { BBCodeDescription } from "./BBCodeDescription";
@@ -17,6 +18,7 @@ export function AddonCard({
   stalenessWarningDays,
   stalenessErrorDays,
   hideStalenessWarnings,
+  currentApiVersion,
   onUninstall,
   onUpdate,
   onFixDeps,
@@ -33,6 +35,7 @@ export function AddonCard({
   stalenessWarningDays: number;
   stalenessErrorDays: number;
   hideStalenessWarnings: boolean;
+  currentApiVersion?: number | null;
   onUninstall: (dirName: string) => Promise<void>;
   onUpdate: (uid: string) => Promise<void>;
   onFixDeps: (dirNames: string[]) => Promise<void>;
@@ -219,9 +222,22 @@ export function AddonCard({
             {addon.addon_version != null && (
               <span>AddOnVersion: {addon.addon_version}</span>
             )}
-            {addon.api_versions.length > 0 && (
-              <span>API: {addon.api_versions.join(", ")}</span>
-            )}
+            {addon.api_versions.length > 0 && (() => {
+              const status = getApiCompatibility(addon.api_versions, currentApiVersion);
+              const labels = addon.api_versions.map(formatUpdateLabel).join(", ");
+              const raw = addon.api_versions.map((v) => `APIVersion ${v}`).join(", ");
+              const tooltip = status === "outdated" && currentApiVersion != null
+                ? `${raw} — outdated, current is APIVersion ${currentApiVersion}`
+                : raw;
+              return (
+                <span
+                  title={tooltip}
+                  className={status === "outdated" ? "text-red-400" : undefined}
+                >
+                  {labels}
+                </span>
+              );
+            })()}
             {fileInfoUrl && (
               <button
                 onClick={() => openUrl(fileInfoUrl).catch(() => {})}

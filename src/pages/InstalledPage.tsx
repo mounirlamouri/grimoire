@@ -35,6 +35,7 @@ export function InstalledPage({
   const [catalogDates, setCatalogDates] = useState<Record<string, number>>({});
   const [fileInfoUrls, setFileInfoUrls] = useState<Record<string, string>>({});
   const [addonPath, setAddonPath] = useState<string | null>(null);
+  const [currentApiVersion, setCurrentApiVersion] = useState<number | null>(null);
   const [uidMap, setUidMap] = useState<Record<string, string>>({});
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
   const { metadataMap, loadingUids, fetchMetadata } = useAddonMetadata();
@@ -161,6 +162,7 @@ export function InstalledPage({
   useEffect(() => {
     loadAddons();
     invoke<string | null>("get_addon_path").then(setAddonPath).catch(() => {});
+    invoke<number | null>("get_current_api_version").then(setCurrentApiVersion).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -355,6 +357,7 @@ export function InstalledPage({
                   stalenessWarningDays={stalenessWarningDays}
                   stalenessErrorDays={stalenessErrorDays}
                   hideStalenessWarnings={hideStalenessWarnings}
+                  currentApiVersion={currentApiVersion}
                   onUninstall={handleUninstall}
                   onUpdate={handleUpdate}
                   onFixDeps={handleFixDeps}

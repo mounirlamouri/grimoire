@@ -65,6 +65,7 @@ pub fn run() {
             commands::settings::set_staleness_error_days,
             commands::settings::get_hide_staleness_warnings,
             commands::settings::set_hide_staleness_warnings,
+            commands::settings::get_current_api_version,
             commands::settings::get_catalog_dates,
             commands::settings::get_file_info_urls,
             commands::updates::check_for_updates,

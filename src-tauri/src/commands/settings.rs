@@ -1,3 +1,4 @@
+use crate::config::api_version;
 use crate::config::paths;
 use crate::config::settings::{load_settings, save_settings};
 use crate::db;
@@ -82,6 +83,15 @@ pub fn set_hide_staleness_warnings(app_handle: tauri::AppHandle, hide: bool) -> 
     let mut settings = load_settings(&app_handle);
     settings.hide_staleness_warnings = hide;
     save_settings(&app_handle, &settings)
+}
+
+/// Reads the live game APIVersion from ESO's AddOnSettings.txt (sibling of AddOns/).
+/// Returns None if the addon path is not configured, the file is missing, or
+/// no #Version directive is present.
+#[tauri::command]
+pub fn get_current_api_version(app_handle: tauri::AppHandle) -> Option<u32> {
+    let addons_path_str = get_addon_path(app_handle)?;
+    api_version::read_current_api_version(&PathBuf::from(addons_path_str))
 }
 
 /// Returns the ESOUI last-update timestamp (milliseconds since epoch) for each

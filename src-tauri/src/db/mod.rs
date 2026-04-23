@@ -1198,7 +1198,7 @@ mod tests {
     fn test_upsert_and_get_metadata() {
         let conn = test_db();
         upsert_metadata(
-            &conn, "42", Some("A cool addon"), Some("[{\"version\":\"101047\",\"name\":\"U43\"}]"),
+            &conn, "42", Some("A cool addon"), Some("[{\"version\":\"11.3.0\",\"name\":\"Season Zero\"}]"),
             Some("https://donate.example.com"), Some("[\"thumb1.png\"]"), Some("[\"full1.png\"]"),
             Some("null"), Some(1700000000000), 1000,
         ).unwrap();
@@ -1208,7 +1208,7 @@ mod tests {
         let meta = &batch["42"];
         assert_eq!(meta.uid, "42");
         assert_eq!(meta.description, Some("A cool addon".to_string()));
-        assert_eq!(meta.compatibility, Some("[{\"version\":\"101047\",\"name\":\"U43\"}]".to_string()));
+        assert_eq!(meta.compatibility, Some("[{\"version\":\"11.3.0\",\"name\":\"Season Zero\"}]".to_string()));
         assert_eq!(meta.donation_link, Some("https://donate.example.com".to_string()));
         assert_eq!(meta.img_thumbs, Some("[\"thumb1.png\"]".to_string()));
         assert_eq!(meta.imgs, Some("[\"full1.png\"]".to_string()));

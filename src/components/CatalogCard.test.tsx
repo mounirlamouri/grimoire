@@ -278,14 +278,14 @@ describe("CatalogCard metadata rendering", () => {
   it("renders compatibility badges from JSON-encoded metadata.compatibility", () => {
     const metadata = makeMetadata({
       compatibility: JSON.stringify([
-        { version: "101047", name: "U43 Secrets" },
-        { version: "101046", name: "" },
+        { version: "11.3.0", name: "Season Zero" },
+        { version: "11.2.0", name: "" },
       ]),
     });
     render(<CatalogCard addon={makeAddon()} {...defaultProps} metadata={metadata} />);
     fireEvent.click(screen.getByText("Test Catalog Addon"));
-    expect(screen.getByText("U43 Secrets")).toBeInTheDocument();
-    expect(screen.getByText("101046")).toBeInTheDocument();
+    expect(screen.getByText("Season Zero")).toBeInTheDocument();
+    expect(screen.getByText("11.2.0")).toBeInTheDocument();
   });
 
   it("does not throw when compatibility JSON is malformed", () => {

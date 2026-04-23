@@ -166,7 +166,7 @@ mod tests {
             "UIAuthorName": "TestAuthor",
             "UIFileInfoURL": "https://example.com/info",
             "UIDownloadMonthly": "1000",
-            "UICompatibility": [{"version": "101047", "name": "U43"}],
+            "UICompatibility": [{"version": "11.3.0", "name": "Season Zero"}],
             "UISiblings": null,
             "UIDonationLink": null,
             "UIIMG_Thumbs": ["https://example.com/thumb.png"],
@@ -270,8 +270,8 @@ mod tests {
             "UIDownloadTotal": "1000",
             "UIDate": 1700000000000,
             "UICompatibility": [
-                { "version": "101047", "name": "U43 Update" },
-                { "version": "101046", "name": "U42 Update" }
+                { "version": "11.3.0", "name": "Season Zero" },
+                { "version": "11.2.0", "name": "Seasons of the Worm Cult Pt2" }
             ],
             "UIDonationLink": "https://donate.example.com/author",
             "UIIMG_Thumbs": ["https://cdn.example.com/t1.png", "https://cdn.example.com/t2.png"],
