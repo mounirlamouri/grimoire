@@ -14,6 +14,10 @@ jobs:
         include:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
+          # Temporary: compare against the older image while windows-latest
+          # (windows-2025-vs2026) fails to open the WebView2 CDP port.
+          - platform: windows-2022
+            target: x86_64-pc-windows-msvc
           - platform: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
 
@@ -75,7 +79,7 @@ jobs:
         run: cargo install tauri-driver --locked
 
       - name: E2E tests (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: runner.os == 'Windows'
         run: npm run test:e2e
 
       - name: E2E tests (Linux)

@@ -51,6 +51,9 @@ const DEBUGGER_HOST = "127.0.0.1";
 const DEBUGGER_PORT = 9222;       // Windows CDP port
 const DRIVER_PORT = 4444;         // msedgedriver (Windows) or tauri-driver (Linux)
 const STATIC_SERVER_PORT = 5173;  // must match tauri.conf.json devUrl
+// WebView2 can be slow to open its CDP port on a cold CI runner. Override with
+// GRIMOIRE_E2E_CDP_TIMEOUT_MS (a tiny value forces the diagnostics path).
+const CDP_TIMEOUT_MS = Number(process.env.GRIMOIRE_E2E_CDP_TIMEOUT_MS) || 60000;
 
 // Module-level state shared between lifecycle hooks.
 let tempDir = null;
@@ -59,6 +62,7 @@ let mockServer = null;
 let staticServer = null;
 // Windows
 let grimoireProc = null;
+let grimoireExit = null;
 let msedgedriverProc = null;
 let msedgedriverPath = null;
 // Linux
@@ -102,6 +106,62 @@ async function waitForDriverStatus(host, port, timeoutMs, label) {
   throw new Error(
     `${label} did not become ready on ${host}:${port} within ${timeoutMs}ms`
   );
+}
+
+// Logs why the WebView2 CDP port may not have opened: whether grimoire is
+// still alive, which WebView2 runtime is installed, whether WebView2 browser
+// processes were spawned (and with which arguments), and what owns port 9222.
+function logWindowsCdpDiagnostics() {
+  console.error("[e2e] ---- WebView2 CDP diagnostics ----");
+  console.error(
+    `[e2e] grimoire pid ${grimoireProc?.pid ?? "n/a"}: ` +
+      (grimoireExit
+        ? `exited (code ${grimoireExit.code}, signal ${grimoireExit.signal})`
+        : "still running")
+  );
+
+  const script = String.raw`
+$ErrorActionPreference = 'SilentlyContinue'
+$guid = '{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}'
+$keys = @(
+  "HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\$guid",
+  "HKLM:\SOFTWARE\Microsoft\EdgeUpdate\Clients\$guid",
+  "HKCU:\Software\Microsoft\EdgeUpdate\Clients\$guid"
+)
+foreach ($k in $keys) {
+  $pv = (Get-ItemProperty -Path $k).pv
+  if ($pv) { "WebView2 runtime: $pv ($k)" } else { "WebView2 runtime: not found ($k)" }
+}
+$gpid = [int]$env:GRIMOIRE_PID
+$procs = @(Get-CimInstance Win32_Process -Filter "Name='msedgewebview2.exe'")
+$browsers = @($procs | Where-Object { $_.ParentProcessId -eq $gpid -and $_.CommandLine -notmatch '--type=' })
+"msedgewebview2.exe processes: " + $procs.Count + " total, " + $browsers.Count + " browser process(es) started by grimoire"
+foreach ($p in $browsers) {
+  $cl = [string]$p.CommandLine
+  if ($cl.Length -gt 600) { $cl = $cl.Substring(0, 600) + '...' }
+  "browser process " + $p.ProcessId + " (parent " + $p.ParentProcessId + "): " + $cl
+}
+$listeners = @(Get-NetTCPConnection -LocalPort 9222 -State Listen)
+if ($listeners.Count -eq 0) { "port 9222: nothing listening" }
+foreach ($l in $listeners) { "port 9222: listening on " + $l.LocalAddress + " by pid " + $l.OwningProcess }
+`;
+
+  const result = spawnSync(
+    "powershell.exe",
+    ["-NoProfile", "-NonInteractive", "-Command", script],
+    {
+      encoding: "utf-8",
+      timeout: 30000,
+      env: { ...process.env, GRIMOIRE_PID: String(grimoireProc?.pid ?? 0) },
+    }
+  );
+  if (result.error) {
+    console.error(`[e2e] diagnostics script failed: ${result.error.message}`);
+  }
+  for (const line of `${result.stdout ?? ""}${result.stderr ?? ""}`.split(/\r?\n/)) {
+    if (line.trim()) console.error(`[e2e]   ${line}`);
+  }
+  console.error("[e2e] ----------------------------------");
 }
 
 async function ensureMsedgedriver() {
@@ -255,18 +315,31 @@ export const config = {
         GRIMOIRE_CONFIG_DIR: tempDir,
       };
 
+      const launchedAt = Date.now();
+      grimoireExit = null;
       grimoireProc = spawn(binaryPath, [], {
         stdio: ["ignore", "inherit", "inherit"],
         env: grimoireEnv,
       });
+      grimoireProc.on("error", (err) => {
+        console.error(`[e2e] failed to launch grimoire: ${err.message}`);
+      });
       grimoireProc.on("exit", (code, signal) => {
+        grimoireExit = { code, signal };
         if (code !== 0 && code !== null) {
           console.error(`[e2e] grimoire exited with code ${code}, signal ${signal}`);
         }
       });
 
-      await waitForCdpPort(DEBUGGER_HOST, DEBUGGER_PORT, 20000);
-      console.log(`[e2e] grimoire CDP ready at ${DEBUGGER_HOST}:${DEBUGGER_PORT}`);
+      try {
+        await waitForCdpPort(DEBUGGER_HOST, DEBUGGER_PORT, CDP_TIMEOUT_MS);
+      } catch (err) {
+        logWindowsCdpDiagnostics();
+        throw err;
+      }
+      console.log(
+        `[e2e] grimoire CDP ready at ${DEBUGGER_HOST}:${DEBUGGER_PORT} after ${Date.now() - launchedAt}ms`
+      );
 
       msedgedriverProc = spawn(
         msedgedriverPath,
