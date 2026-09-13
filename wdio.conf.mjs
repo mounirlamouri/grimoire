@@ -4,8 +4,13 @@
 //   1. Starts a mock MMOUI server on a random port.
 //   2. Starts a static file server on port 5173 (serves dist/ to the debug binary).
 //   3. Launches grimoire.exe directly with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-//      so the embedded WebView2 exposes a CDP endpoint on port 9222.
-//   4. Spawns msedgedriver and attaches it via ms:edgeOptions.debuggerAddress.
+//      so the embedded WebView2 exposes a CDP endpoint on port 9222. In CI the
+//      same arguments are also written to the per-app WebView2
+//      AdditionalBrowserArguments registry policy (removed in onComplete),
+//      because some runner images don't apply the environment variable.
+//   4. Spawns msedgedriver matching the installed WebView2 runtime (which can
+//      differ from the Edge browser version) and attaches it via
+//      ms:edgeOptions.debuggerAddress.
 //
 // Linux (WebKitGTK / tauri-driver):
 //   1. Starts the same mock and static servers.
@@ -55,6 +60,16 @@ const STATIC_SERVER_PORT = 5173;  // must match tauri.conf.json devUrl
 // GRIMOIRE_E2E_CDP_TIMEOUT_MS (a tiny value forces the diagnostics path).
 const CDP_TIMEOUT_MS = Number(process.env.GRIMOIRE_E2E_CDP_TIMEOUT_MS) || 60000;
 
+const WEBVIEW2_ARGS = `--remote-debugging-port=${DEBUGGER_PORT} --remote-debugging-address=${DEBUGGER_HOST}`;
+// EdgeUpdate client ID of the Evergreen WebView2 runtime.
+const WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
+// Read by the WebView2 loader when WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is not
+// set. Value names are app IDs; never use "*", or every WebView2 app on the
+// machine would try to claim the debugging port.
+const WEBVIEW2_ARGS_POLICY_KEY =
+  "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+const WEBVIEW2_ARGS_POLICY_APP_ID = "grimoire.exe";
+
 // Module-level state shared between lifecycle hooks.
 let tempDir = null;
 let addonsDir = null;
@@ -63,6 +78,7 @@ let staticServer = null;
 // Windows
 let grimoireProc = null;
 let grimoireExit = null;
+let webview2PolicySet = false;
 let msedgedriverProc = null;
 let msedgedriverPath = null;
 // Linux
@@ -108,6 +124,61 @@ async function waitForDriverStatus(host, port, timeoutMs, label) {
   );
 }
 
+// Returns the REG_SZ data of `valueName` under `key`, or null if absent.
+function regQueryValue(key, valueName) {
+  const result = spawnSync("reg", ["query", key, "/v", valueName], { encoding: "utf-8" });
+  if (result.status !== 0) return null;
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const idx = line.indexOf("REG_SZ");
+    if (idx !== -1 && line.trim().startsWith(valueName)) {
+      return line.slice(idx + "REG_SZ".length).trim();
+    }
+  }
+  return null;
+}
+
+// Version of the WebView2 runtime grimoire.exe runs on, or null if not found.
+function getWebView2RuntimeVersion() {
+  const keys = [
+    `HKLM\\SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_CLIENT_GUID}`,
+    `HKLM\\SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_CLIENT_GUID}`,
+    `HKCU\\Software\\Microsoft\\EdgeUpdate\\Clients\\${WEBVIEW2_CLIENT_GUID}`,
+  ];
+  for (const key of keys) {
+    const version = regQueryValue(key, "pv");
+    if (version && version !== "0.0.0.0") return version;
+  }
+  return null;
+}
+
+function setWebView2ArgsPolicy() {
+  const result = spawnSync(
+    "reg",
+    ["add", WEBVIEW2_ARGS_POLICY_KEY, "/v", WEBVIEW2_ARGS_POLICY_APP_ID, "/t", "REG_SZ", "/d", WEBVIEW2_ARGS, "/f"],
+    { encoding: "utf-8" }
+  );
+  if (result.status !== 0) {
+    console.error(
+      `[e2e] failed to set WebView2 args policy: ${result.error?.message ?? result.stderr.trim()}`
+    );
+    return;
+  }
+  webview2PolicySet = true;
+  console.log(
+    `[e2e] WebView2 args policy: ${WEBVIEW2_ARGS_POLICY_KEY} ${WEBVIEW2_ARGS_POLICY_APP_ID} = ${WEBVIEW2_ARGS}`
+  );
+}
+
+function removeWebView2ArgsPolicy() {
+  if (!webview2PolicySet) return;
+  spawnSync(
+    "reg",
+    ["delete", WEBVIEW2_ARGS_POLICY_KEY, "/v", WEBVIEW2_ARGS_POLICY_APP_ID, "/f"],
+    { stdio: "ignore" }
+  );
+  webview2PolicySet = false;
+}
+
 // Logs why the WebView2 CDP port may not have opened: whether grimoire is
 // still alive, which WebView2 runtime is installed, whether WebView2 browser
 // processes were spawned (and with which arguments), and what owns port 9222.
@@ -141,6 +212,11 @@ foreach ($p in $browsers) {
   if ($cl.Length -gt 600) { $cl = $cl.Substring(0, 600) + '...' }
   "browser process " + $p.ProcessId + " (parent " + $p.ParentProcessId + "): " + $cl
 }
+foreach ($root in @('HKLM', 'HKCU')) {
+  $pol = Get-ItemProperty -Path "$($root):\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+  $vals = @($pol.PSObject.Properties | Where-Object { $_.Name -notlike 'PS*' } | ForEach-Object { $_.Name + ' = ' + $_.Value })
+  if ($vals.Count -eq 0) { "WebView2 args policy ($root): not set" } else { "WebView2 args policy ($root): " + ($vals -join '; ') }
+}
 $listeners = @(Get-NetTCPConnection -LocalPort 9222 -State Listen)
 if ($listeners.Count -eq 0) { "port 9222: nothing listening" }
 foreach ($l in $listeners) { "port 9222: listening on " + $l.LocalAddress + " by pid " + $l.OwningProcess }
@@ -164,9 +240,20 @@ foreach ($l in $listeners) { "port 9222: listening on " + $l.LocalAddress + " by
   console.error("[e2e] ----------------------------------");
 }
 
+// msedgedriver must match the WebView2 runtime it attaches to, not the Edge
+// browser that edgedriver detects by default (runner images ship them at
+// different versions). edgedriver reuses any msedgedriver.exe already in its
+// cache dir regardless of version, so cache each version separately.
 async function ensureMsedgedriver() {
   const mod = await import("edgedriver");
-  const p = await mod.download();
+  const webview2Version = getWebView2RuntimeVersion();
+  console.log(`[e2e] WebView2 runtime: ${webview2Version ?? "not found, using Edge browser version"}`);
+  const p = webview2Version
+    ? await mod.download(
+        webview2Version,
+        join(tmpdir(), "grimoire-e2e-msedgedriver", webview2Version)
+      )
+    : await mod.download();
   if (!existsSync(p)) {
     throw new Error(`edgedriver.download() returned a non-existent path: ${p}`);
   }
@@ -309,11 +396,16 @@ export const config = {
       // Launch grimoire with CDP enabled.
       const grimoireEnv = {
         ...process.env,
-        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${DEBUGGER_PORT} --remote-debugging-address=${DEBUGGER_HOST}`,
+        WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: WEBVIEW2_ARGS,
         GRIMOIRE_API_BASE_URL: mockServer.globalConfigUrl,
         GRIMOIRE_DATA_DIR: tempDir,
         GRIMOIRE_CONFIG_DIR: tempDir,
       };
+      // Only in CI: the policy enables remote debugging for every grimoire.exe
+      // launch until it is removed, which must never linger on a dev machine.
+      if (process.env.CI) {
+        setWebView2ArgsPolicy();
+      }
 
       const launchedAt = Date.now();
       grimoireExit = null;
@@ -400,6 +492,7 @@ export const config = {
         try { grimoireProc.kill(); } catch { /* ignore */ }
         grimoireProc = null;
       }
+      removeWebView2ArgsPolicy();
     } else {
       if (tauriDriverProc) {
         try { tauriDriverProc.kill(); } catch { /* ignore */ }
