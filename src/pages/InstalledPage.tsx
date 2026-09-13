@@ -8,6 +8,8 @@ import { UpdatesBanner } from "../components/UpdatesBanner";
 import { OrphanedLibsPanel } from "../components/OrphanedLibsPanel";
 import { ExportModal } from "../components/ExportModal";
 import { ImportModal } from "../components/ImportModal";
+import { UpdateProgressModal } from "../components/UpdateProgressModal";
+import { runBatchUpdate, summarizeBatchUpdate, type BatchProgress } from "../utils/batchUpdate";
 
 export function InstalledPage({
   onError,
@@ -37,6 +39,7 @@ export function InstalledPage({
   const [addonPath, setAddonPath] = useState<string | null>(null);
   const [currentApiVersion, setCurrentApiVersion] = useState<number | null>(null);
   const [uidMap, setUidMap] = useState<Record<string, string>>({});
+  const [batchProgress, setBatchProgress] = useState<BatchProgress | null>(null);
   const { stalenessWarningDays, stalenessErrorDays, hideStalenessWarnings } = useStalenessSettings();
   const { metadataMap, loadingUids, fetchMetadata } = useAddonMetadata();
 
@@ -88,6 +91,23 @@ export function InstalledPage({
       }
     } catch (err) {
       onError(`Update failed: ${err}`);
+    }
+  };
+
+  const handleUpdateAll = async () => {
+    const outcome = await runBatchUpdate(
+      [...updates],
+      (uid) => invoke<InstallResult>("update_addon", { uid }),
+      setBatchProgress
+    );
+    setBatchProgress(null);
+    outcome.updatedUids.forEach((uid) => onUpdateDone(uid));
+    loadAddons();
+    const summary = summarizeBatchUpdate(outcome);
+    if (summary.kind === "success") {
+      onSuccess({ message: summary.message, details: summary.details });
+    } else {
+      onError(summary.message);
     }
   };
 
@@ -236,6 +256,7 @@ export function InstalledPage({
 
   return (
     <div className="space-y-4">
+      {batchProgress && <UpdateProgressModal {...batchProgress} />}
       {showExport && (
         <ExportModal
           addons={addons}
@@ -306,7 +327,7 @@ export function InstalledPage({
       ) : (
         <>
           {updates.length > 0 && (
-            <UpdatesBanner updates={updates} onUpdate={handleUpdate} onError={onError} onDone={loadAddons} />
+            <UpdatesBanner updates={updates} onUpdateAll={handleUpdateAll} updatingAll={batchProgress !== null} />
           )}
 
           {orphanedLibs !== null && (

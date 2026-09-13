@@ -1,40 +1,14 @@
-import { useState } from "react";
 import type { AddonUpdate } from "../types/addon";
 
 export function UpdatesBanner({
   updates,
-  onUpdate,
-  onError,
-  onDone,
+  onUpdateAll,
+  updatingAll,
 }: {
   updates: AddonUpdate[];
-  onUpdate: (uid: string) => Promise<void>;
-  onError: (msg: string) => void;
-  onDone: () => void;
+  onUpdateAll: () => void;
+  updatingAll: boolean;
 }) {
-  const [updatingAll, setUpdatingAll] = useState(false);
-  const [progress, setProgress] = useState(0);
-
-  const handleUpdateAll = async (e: React.MouseEvent) => {
-    e.preventDefault();
-    setUpdatingAll(true);
-    setProgress(0);
-    let failed = 0;
-    for (let i = 0; i < updates.length; i++) {
-      try {
-        await onUpdate(updates[i].uid);
-      } catch (err) {
-        failed++;
-      }
-      setProgress(i + 1);
-    }
-    setUpdatingAll(false);
-    if (failed > 0) {
-      onError(`${failed} addon${failed !== 1 ? "s" : ""} failed to update.`);
-    }
-    onDone();
-  };
-
   if (updates.length === 0) return null;
 
   return (
@@ -44,13 +18,11 @@ export function UpdatesBanner({
           Updates Available ({updates.length})
         </h3>
         <button
-          onClick={handleUpdateAll}
+          onClick={onUpdateAll}
           disabled={updatingAll}
           className="rounded bg-[var(--accent)] px-3 py-1 text-xs font-medium text-white transition hover:brightness-110 disabled:opacity-50"
         >
-          {updatingAll
-            ? `Updating ${progress}/${updates.length}...`
-            : "Update All"}
+          {updatingAll ? "Updating..." : "Update All"}
         </button>
       </div>
       <div className="space-y-1">
