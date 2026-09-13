@@ -75,7 +75,7 @@ jobs:
         run: cargo install tauri-driver --locked
 
       - name: E2E tests (Windows)
-        if: matrix.platform == 'windows-latest'
+        if: runner.os == 'Windows'
         run: npm run test:e2e
 
       - name: E2E tests (Linux)
