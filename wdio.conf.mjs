@@ -5,9 +5,10 @@
 //   2. Starts a static file server on port 5173 (serves dist/ to the debug binary).
 //   3. Launches grimoire.exe directly with WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 //      so the embedded WebView2 exposes a CDP endpoint on port 9222. In CI the
-//      same arguments are also written to the per-app WebView2
-//      AdditionalBrowserArguments registry policy (removed in onComplete),
-//      because some runner images don't apply the environment variable.
+//      same arguments are also written to the per-app HKLM WebView2
+//      AdditionalBrowserArguments policy (removed in onComplete): GitHub runners
+//      run elevated, and WebView2 Runtime 150+ ignores the environment variable
+//      (and HKCU policy) for elevated host processes.
 //   4. Spawns msedgedriver matching the installed WebView2 runtime (which can
 //      differ from the Edge browser version) and attaches it via
 //      ms:edgeOptions.debuggerAddress.
@@ -63,11 +64,14 @@ const CDP_TIMEOUT_MS = Number(process.env.GRIMOIRE_E2E_CDP_TIMEOUT_MS) || 60000;
 const WEBVIEW2_ARGS = `--remote-debugging-port=${DEBUGGER_PORT} --remote-debugging-address=${DEBUGGER_HOST}`;
 // EdgeUpdate client ID of the Evergreen WebView2 runtime.
 const WEBVIEW2_CLIENT_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}";
-// Read by the WebView2 loader when WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS is not
-// set. Value names are app IDs; never use "*", or every WebView2 app on the
-// machine would try to claim the debugging port.
+// Since WebView2 Runtime 150, an elevated host process ignores
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS and HKCU policy; only HKLM policy and
+// API-supplied arguments are honored (by design, see
+// https://github.com/MicrosoftEdge/WebView2Feedback/issues/5640). Writing HKLM
+// requires admin, which CI runners have. Value names are app IDs; never use
+// "*", or every WebView2 app on the machine would try to claim the port.
 const WEBVIEW2_ARGS_POLICY_KEY =
-  "HKCU\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
+  "HKLM\\Software\\Policies\\Microsoft\\Edge\\WebView2\\AdditionalBrowserArguments";
 const WEBVIEW2_ARGS_POLICY_APP_ID = "grimoire.exe";
 
 // Module-level state shared between lifecycle hooks.
