@@ -1,4 +1,5 @@
 use crate::config::api_version;
+use crate::config::autostart::{self, AutostartEntry, AutostartStatus};
 use crate::config::paths;
 use crate::config::settings::{load_settings, save_settings};
 use crate::db;
@@ -82,6 +83,38 @@ pub fn get_hide_staleness_warnings(app_handle: tauri::AppHandle) -> bool {
 pub fn set_hide_staleness_warnings(app_handle: tauri::AppHandle, hide: bool) -> Result<(), String> {
     let mut settings = load_settings(&app_handle);
     settings.hide_staleness_warnings = hide;
+    save_settings(&app_handle, &settings)
+}
+
+/// Returns whether Grimoire is registered to launch at login. The OS entry is
+/// the source of truth, so this reflects changes made in Task Manager or the
+/// desktop's autostart settings.
+#[tauri::command]
+pub fn get_autostart_status() -> Result<AutostartStatus, String> {
+    autostart::status(&autostart::entry_name())
+}
+
+#[tauri::command]
+pub fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+    if enabled {
+        autostart::enable(&AutostartEntry::for_current_exe()?)
+    } else {
+        autostart::disable(&autostart::entry_name())
+    }
+}
+
+#[tauri::command]
+pub fn get_start_minimized_on_autostart(app_handle: tauri::AppHandle) -> bool {
+    load_settings(&app_handle).start_minimized_on_autostart
+}
+
+#[tauri::command]
+pub fn set_start_minimized_on_autostart(
+    app_handle: tauri::AppHandle,
+    minimized: bool,
+) -> Result<(), String> {
+    let mut settings = load_settings(&app_handle);
+    settings.start_minimized_on_autostart = minimized;
     save_settings(&app_handle, &settings)
 }
 
