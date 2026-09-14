@@ -13,7 +13,18 @@ use crate::config::dirs::grimoire_data_dir;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // A second launch (e.g. from the Start menu while an autostarted instance
+    // sits hidden in the tray) focuses the existing window instead of starting
+    // another process. Release-only so dev builds and E2E runs don't hand off
+    // to an installed Grimoire. Must be the first plugin registered.
+    #[cfg(not(debug_assertions))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        tray::show_main_window(app);
+    }));
+
+    builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -37,6 +48,27 @@ pub fn run() {
             app.manage(tokio::sync::Mutex::new(esoui::api::EsoUiClient::new()));
 
             tray::create_tray(app)?;
+
+            // The main window is created hidden (tauri.conf.json) so a login
+            // launch can stay in the tray without flashing the window first.
+            let start_minimized =
+                config::settings::load_settings(app.handle()).start_minimized_on_autostart;
+            let args: Vec<String> = std::env::args_os()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            if !config::autostart::should_start_hidden(&args, start_minimized) {
+                tray::show_main_window(app.handle());
+            }
+
+            // Keep an existing autostart entry pointing at this executable,
+            // e.g. after an AppImage was moved.
+            match config::autostart::AutostartEntry::for_current_exe()
+                .and_then(|entry| config::autostart::refresh_if_stale(&entry))
+            {
+                Ok(true) => log::info!("Updated stale autostart entry"),
+                Ok(false) => {}
+                Err(e) => log::warn!("Failed to refresh autostart entry: {}", e),
+            }
 
             Ok(())
         })
@@ -65,6 +97,10 @@ pub fn run() {
             commands::settings::set_staleness_error_days,
             commands::settings::get_hide_staleness_warnings,
             commands::settings::set_hide_staleness_warnings,
+            commands::settings::get_autostart_status,
+            commands::settings::set_autostart_enabled,
+            commands::settings::get_start_minimized_on_autostart,
+            commands::settings::set_start_minimized_on_autostart,
             commands::settings::get_current_api_version,
             commands::settings::get_catalog_dates,
             commands::settings::get_file_info_urls,

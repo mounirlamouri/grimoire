@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import type { AutostartStatus } from "../types/addon";
 
 export function SettingsPage() {
   const [addonPath, setAddonPath] = useState<string>("");
@@ -11,6 +12,11 @@ export function SettingsPage() {
   const [stalenessErrorDays, setStalenessErrorDays] = useState<number>(365);
   const [hideStalenessWarnings, setHideStalenessWarnings] = useState<boolean>(false);
   const [stalenessStatus, setStalenessStatus] = useState<string>("");
+  const [autostartStatus, setAutostartStatus] = useState<AutostartStatus>("disabled");
+  const [autostartBusy, setAutostartBusy] = useState<boolean>(false);
+  const [startMinimized, setStartMinimized] = useState<boolean>(true);
+  const [startupStatus, setStartupStatus] = useState<string>("");
+  const autostartEnabled = autostartStatus === "enabled";
 
   useEffect(() => {
     invoke<string | null>("get_addon_path")
@@ -31,6 +37,8 @@ export function SettingsPage() {
     invoke<number>("get_staleness_warning_days").then(setStalenessWarningDays).catch(() => {});
     invoke<number>("get_staleness_error_days").then(setStalenessErrorDays).catch(() => {});
     invoke<boolean>("get_hide_staleness_warnings").then(setHideStalenessWarnings).catch(() => {});
+    invoke<AutostartStatus>("get_autostart_status").then(setAutostartStatus).catch(() => {});
+    invoke<boolean>("get_start_minimized_on_autostart").then(setStartMinimized).catch(() => {});
   }, []);
 
   const handleBrowse = async () => {
@@ -109,6 +117,36 @@ export function SettingsPage() {
     }
   };
 
+  const handleAutostartChange = async (enabled: boolean) => {
+    const previous = autostartStatus;
+    setAutostartStatus(enabled ? "enabled" : "disabled");
+    setAutostartBusy(true);
+    try {
+      await invoke("set_autostart_enabled", { enabled });
+      setStartupStatus("Saved");
+      setTimeout(() => setStartupStatus(""), 2000);
+    } catch (err) {
+      setAutostartStatus(previous);
+      setStartupStatus(`Error: ${err}`);
+      return;
+    } finally {
+      setAutostartBusy(false);
+    }
+    // Re-read so the UI shows what the OS actually recorded.
+    invoke<AutostartStatus>("get_autostart_status").then(setAutostartStatus).catch(() => {});
+  };
+
+  const handleStartMinimizedChange = async (minimized: boolean) => {
+    setStartMinimized(minimized);
+    try {
+      await invoke("set_start_minimized_on_autostart", { minimized });
+      setStartupStatus("Saved");
+      setTimeout(() => setStartupStatus(""), 2000);
+    } catch (err) {
+      setStartupStatus(`Error: ${err}`);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold">Settings</h2>
@@ -158,6 +196,50 @@ export function SettingsPage() {
         <p className="mt-2 text-xs text-[var(--text-secondary)]">
           How often the addon catalog and update information is automatically refreshed from ESOUI.
         </p>
+      </div>
+
+      <div className="rounded-lg bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-[var(--text-secondary)]">
+            Startup
+          </label>
+          {startupStatus && (
+            <span className="text-xs text-[var(--teal)]">{startupStatus}</span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          Grimoire will run in the background and keep the addon catalog up to date.
+        </p>
+
+        <div className="mt-3 space-y-3">
+          <label className="flex items-center gap-2 text-sm text-[var(--text-secondary)]">
+            <input
+              type="checkbox"
+              checked={autostartEnabled}
+              disabled={autostartBusy}
+              onChange={(e) => handleAutostartChange(e.target.checked)}
+              className="accent-[var(--teal)]"
+            />
+            Launch Grimoire when I sign in
+          </label>
+          {autostartStatus === "disabled_by_system" && (
+            <p className="ml-6 text-xs text-yellow-400">
+              Turned off in your system's startup settings. Turning this on re-enables it.
+            </p>
+          )}
+          <label
+            className={`ml-6 flex items-center gap-2 text-sm text-[var(--text-secondary)] ${autostartEnabled ? "" : "opacity-40"}`}
+          >
+            <input
+              type="checkbox"
+              checked={startMinimized}
+              disabled={!autostartEnabled}
+              onChange={(e) => handleStartMinimizedChange(e.target.checked)}
+              className="accent-[var(--teal)]"
+            />
+            Start minimized to the system tray
+          </label>
+        </div>
       </div>
 
       <div className="rounded-lg bg-[var(--bg-card)] p-4">

@@ -22,6 +22,8 @@
 //
 // GRIMOIRE_DATA_DIR / GRIMOIRE_CONFIG_DIR point at a per-run temp dir so
 // the real user's catalog.db / settings.json / AddOns folder are untouched.
+// GRIMOIRE_AUTOSTART_NAME gives the launch-at-login entry a test-only name,
+// removed again in onComplete.
 
 import { spawn, spawnSync } from "node:child_process";
 import {
@@ -33,6 +35,10 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  ENTRY_NAME as AUTOSTART_ENTRY_NAME,
+  removeEntry as removeAutostartEntry,
+} from "./e2e/autostart-entry.mjs";
 import { start as startMockServer } from "./e2e/mock-server.mjs";
 import { start as startStaticServer } from "./e2e/static-server.mjs";
 
@@ -313,6 +319,7 @@ export const config = {
 
   specs: ["./e2e/**/*.test.mjs"],
   exclude: [
+    "./e2e/autostart-entry.mjs",
     "./e2e/mock-server.mjs",
     "./e2e/static-server.mjs",
   ],
@@ -375,6 +382,7 @@ export const config = {
       staleness_warning_days: 180,
       staleness_error_days: 365,
       hide_staleness_warnings: false,
+      start_minimized_on_autostart: true,
     };
     writeFileSync(
       join(tempDir, "settings.json"),
@@ -388,6 +396,10 @@ export const config = {
     // Expose paths to tests via env (wdio workers inherit parent env).
     process.env.GRIMOIRE_E2E_TEMP_DIR = tempDir;
     process.env.GRIMOIRE_E2E_ADDONS_DIR = addonsDir;
+    // Set before launching so both the Windows spawn env and tauri-driver
+    // (Linux) pass it to the app.
+    process.env.GRIMOIRE_AUTOSTART_NAME = AUTOSTART_ENTRY_NAME;
+    removeAutostartEntry();
 
     console.log(`[e2e] temp dir:       ${tempDir}`);
     console.log(`[e2e] addons dir:     ${addonsDir}`);
@@ -506,6 +518,8 @@ export const config = {
 
     // Force-kill any stragglers regardless of platform.
     try { killStaleProcesses(); } catch { /* ignore */ }
+
+    try { removeAutostartEntry(); } catch { /* ignore */ }
 
     if (staticServer) {
       try { await staticServer.close(); } catch { /* ignore */ }

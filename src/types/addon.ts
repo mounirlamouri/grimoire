@@ -119,3 +119,6 @@ export interface CompatibilityEntry {
   version: string;
   name: string;
 }
+
+/** Launch-at-login state, read from the OS (see config/autostart in Rust). */
+export type AutostartStatus = "enabled" | "disabled" | "disabled_by_system";

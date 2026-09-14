@@ -17,6 +17,11 @@ pub struct AppSettings {
     /// Hide staleness warnings/errors on addon cards. Default: false.
     #[serde(default)]
     pub hide_staleness_warnings: bool,
+    /// When launched at login (`--autostart`), stay in the tray instead of
+    /// opening the window. Whether autostart is on is read from the OS, not
+    /// stored here. Default: true.
+    #[serde(default = "default_start_minimized_on_autostart")]
+    pub start_minimized_on_autostart: bool,
 }
 
 fn default_sync_interval() -> f64 {
@@ -31,6 +36,10 @@ fn default_staleness_error_days() -> u32 {
     365
 }
 
+fn default_start_minimized_on_autostart() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -39,6 +48,7 @@ impl Default for AppSettings {
             staleness_warning_days: default_staleness_warning_days(),
             staleness_error_days: default_staleness_error_days(),
             hide_staleness_warnings: false,
+            start_minimized_on_autostart: default_start_minimized_on_autostart(),
         }
     }
 }
@@ -75,6 +85,7 @@ mod tests {
         assert_eq!(settings.staleness_warning_days, 180);
         assert_eq!(settings.staleness_error_days, 365);
         assert!(!settings.hide_staleness_warnings);
+        assert!(settings.start_minimized_on_autostart);
     }
 
     #[test]
@@ -102,6 +113,7 @@ mod tests {
         assert_eq!(settings.staleness_warning_days, 180);
         assert_eq!(settings.staleness_error_days, 365);
         assert!(!settings.hide_staleness_warnings);
+        assert!(settings.start_minimized_on_autostart);
     }
 
     #[test]
@@ -128,6 +140,21 @@ mod tests {
     }
 
     #[test]
+    fn test_deserialize_missing_start_minimized_uses_default() {
+        // Simulates a settings.json written before launch-at-login existed
+        let json = r#"{"addon_path": "/some/path", "hide_staleness_warnings": true}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(settings.start_minimized_on_autostart);
+    }
+
+    #[test]
+    fn test_deserialize_start_minimized_false() {
+        let json = r#"{"start_minimized_on_autostart": false}"#;
+        let settings: AppSettings = serde_json::from_str(json).unwrap();
+        assert!(!settings.start_minimized_on_autostart);
+    }
+
+    #[test]
     fn test_serialize_roundtrip() {
         let settings = AppSettings {
             addon_path: Some("/path/to/addons".to_string()),
@@ -135,6 +162,7 @@ mod tests {
             staleness_warning_days: 90,
             staleness_error_days: 180,
             hide_staleness_warnings: true,
+            start_minimized_on_autostart: false,
         };
         let json = serde_json::to_string(&settings).unwrap();
         let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
@@ -143,6 +171,10 @@ mod tests {
         assert_eq!(deserialized.staleness_warning_days, settings.staleness_warning_days);
         assert_eq!(deserialized.staleness_error_days, settings.staleness_error_days);
         assert_eq!(deserialized.hide_staleness_warnings, settings.hide_staleness_warnings);
+        assert_eq!(
+            deserialized.start_minimized_on_autostart,
+            settings.start_minimized_on_autostart
+        );
     }
 
     #[test]
