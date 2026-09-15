@@ -57,6 +57,20 @@ pub fn run() {
 
             tray::create_tray(app)?;
 
+            // Clean up after an install interrupted by a crash, off the main
+            // thread so it never delays the window.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let addon_path = config::settings::load_settings(&handle)
+                    .addon_path
+                    .map(std::path::PathBuf::from)
+                    .filter(|p| p.is_dir())
+                    .or_else(|| config::paths::detect_addon_path());
+                if let Some(addon_path) = addon_path {
+                    addon::installer::recover_interrupted_installs(&addon_path);
+                }
+            });
+
             // The main window is created hidden (tauri.conf.json) so a login
             // launch can stay in the tray without flashing the window first.
             let start_minimized =

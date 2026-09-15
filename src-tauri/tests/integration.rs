@@ -254,6 +254,42 @@ fn test_install_uninstall_lifecycle() {
     assert!(!dir.path().join("AddonA").exists());
 }
 
+// ── Test 4b: Update replaces the addon folder contents ──────────────
+
+#[test]
+fn test_update_replaces_addon_contents() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let v1 = create_test_zip(&[
+        ("MyAddon/MyAddon.txt", b"## Title: My Addon\n## Version: 1.0\nold.lua\n"),
+        ("MyAddon/old.lua", b"-- removed in 2.0\n"),
+        ("MyAddon/Libs/LibOld/LibOld.lua", b"-- removed in 2.0\n"),
+    ]);
+    installer::install_from_zip(&v1, dir.path()).unwrap();
+
+    let v2 = create_test_zip(&[
+        ("MyAddon/MyAddon.txt", b"## Title: My Addon\n## Version: 2.0\nnew.lua\n"),
+        ("MyAddon/new.lua", b"-- added in 2.0\n"),
+    ]);
+    let top_dirs = installer::install_from_zip(&v2, dir.path()).unwrap();
+    assert_eq!(top_dirs, vec!["MyAddon"]);
+
+    // Files dropped by the new version are gone
+    assert!(!dir.path().join("MyAddon/old.lua").exists());
+    assert!(!dir.path().join("MyAddon/Libs").exists());
+    assert!(dir.path().join("MyAddon/new.lua").exists());
+
+    // Scan sees exactly one addon at the new version, and no temp dirs remain
+    let addons = manifest::scan_installed_addons(dir.path()).unwrap();
+    assert_eq!(addons.len(), 1);
+    assert_eq!(addons[0].version, "2.0");
+    let entries: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(entries, vec!["MyAddon"]);
+}
+
 // ── Test 5: Catalog lookup → Dependency resolution ─────────────────
 
 #[test]
