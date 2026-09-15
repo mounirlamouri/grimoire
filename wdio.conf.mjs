@@ -40,7 +40,10 @@ import {
   removeEntry as removeAutostartEntry,
 } from "./e2e/autostart-entry.mjs";
 import { start as startMockServer } from "./e2e/mock-server.mjs";
-import { start as startStaticServer } from "./e2e/static-server.mjs";
+import {
+  cspFromTauriConfig,
+  start as startStaticServer,
+} from "./e2e/static-server.mjs";
 
 const isWindows = process.platform === "win32";
 const isLinux = process.platform === "linux";
@@ -391,11 +394,16 @@ export const config = {
     );
 
     mockServer = await startMockServer(0);
-    staticServer = await startStaticServer(STATIC_SERVER_PORT, distDir);
+    // Tauri doesn't apply the app's CSP to devUrl pages, so the static server
+    // sends it and collects violation reports for e2e/csp.test.mjs.
+    staticServer = await startStaticServer(STATIC_SERVER_PORT, distDir, {
+      csp: cspFromTauriConfig(),
+    });
 
     // Expose paths to tests via env (wdio workers inherit parent env).
     process.env.GRIMOIRE_E2E_TEMP_DIR = tempDir;
     process.env.GRIMOIRE_E2E_ADDONS_DIR = addonsDir;
+    process.env.GRIMOIRE_E2E_STATIC_URL = staticServer.url;
     // Set before launching so both the Windows spawn env and tauri-driver
     // (Linux) pass it to the app.
     process.env.GRIMOIRE_AUTOSTART_NAME = AUTOSTART_ENTRY_NAME;
