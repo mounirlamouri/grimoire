@@ -49,13 +49,16 @@ export function BrowsePage({
   }, []);
 
   const loadAddons = useCallback(
-    async (q: string, pageNum: number) => {
+    async (q: string, pageNum: number, includeLibraries: boolean) => {
       setLoading(true);
       try {
+        // Libraries are filtered in SQL, not here: dropping them after paging
+        // would leave short pages and make "Next" look like the end of the list.
         const results = await invoke<CatalogAddon[]>("search_addons", {
           query: q,
           limit: PAGE_SIZE,
           offset: pageNum * PAGE_SIZE,
+          includeLibraries,
         });
         setAddons(results);
       } catch (err) {
@@ -70,16 +73,16 @@ export function BrowsePage({
   // Load on mount and when syncing finishes
   useEffect(() => {
     loadInstalledDirs();
-    loadStatus().then(() => loadAddons(query, page));
+    loadStatus().then(() => loadAddons(query, page, showLibraries));
   }, [syncing]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Reload when query or page changes
+  // Reload when the query, the page or the library filter changes
   useEffect(() => {
     const timer = setTimeout(() => {
-      loadAddons(query, page);
+      loadAddons(query, page, showLibraries);
     }, 300); // debounce search
     return () => clearTimeout(timer);
-  }, [query, page, loadAddons]);
+  }, [query, page, showLibraries, loadAddons]);
 
   const handleInstall = async (uid: string) => {
     try {
@@ -122,8 +125,6 @@ export function BrowsePage({
     }
   };
 
-  const filtered = showLibraries ? addons : addons.filter((a) => !a.is_library);
-
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -164,16 +165,19 @@ export function BrowsePage({
           <input
             type="checkbox"
             checked={showLibraries}
-            onChange={(e) => setShowLibraries(e.target.checked)}
+            onChange={(e) => {
+              setShowLibraries(e.target.checked);
+              setPage(0);
+            }}
             className="accent-[var(--teal)]"
           />
           Show libraries
         </label>
       </div>
 
-      {loading && filtered.length === 0 ? (
+      {loading && addons.length === 0 ? (
         <p className="text-[var(--text-secondary)]">Loading catalog...</p>
-      ) : filtered.length === 0 ? (
+      ) : addons.length === 0 ? (
         <p className="text-[var(--text-secondary)]">
           {status?.addon_count === 0
             ? "Catalog is empty. Click 'Force Sync' to fetch the addon list."
@@ -182,7 +186,7 @@ export function BrowsePage({
       ) : (
         <>
           <div className="space-y-2">
-            {filtered.map((addon) => (
+            {addons.map((addon) => (
               <CatalogCard
                 key={addon.uid}
                 addon={addon}
@@ -215,7 +219,7 @@ export function BrowsePage({
             </span>
             <button
               onClick={() => setPage((p) => p + 1)}
-              disabled={filtered.length < PAGE_SIZE}
+              disabled={addons.length < PAGE_SIZE}
               className="rounded border border-[var(--teal-dim)]/30 px-3 py-1.5 text-sm text-[var(--text-secondary)] transition hover:bg-white/5 hover:text-white disabled:opacity-30"
             >
               Next

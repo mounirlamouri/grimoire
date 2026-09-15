@@ -170,6 +170,7 @@ pub fn search_addons(
     query: String,
     limit: Option<i64>,
     offset: Option<i64>,
+    include_libraries: Option<bool>,
 ) -> Result<Vec<CatalogAddon>, String> {
     let db_state = app_handle.state::<Mutex<Connection>>();
     let conn = db_state
@@ -178,11 +179,12 @@ pub fn search_addons(
 
     let limit = limit.unwrap_or(50);
     let offset = offset.unwrap_or(0);
+    let include_libraries = include_libraries.unwrap_or(true);
 
     if query.is_empty() {
-        db::browse_catalog(&conn, limit, offset)
+        db::browse_catalog(&conn, limit, offset, include_libraries)
     } else {
-        db::search_catalog(&conn, &query, limit, offset)
+        db::search_catalog(&conn, &query, limit, offset, include_libraries)
     }
 }
 

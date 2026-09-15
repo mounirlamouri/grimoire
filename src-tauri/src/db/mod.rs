@@ -153,22 +153,45 @@ pub fn upsert_catalog(
     Ok(())
 }
 
+/// The columns every catalog listing selects, in the order `row_to_catalog_addon` expects.
+const CATALOG_COLUMNS: &str = "uid, name, version, date, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url";
+
+/// SQL clause that drops library rows, or nothing when libraries are wanted.
+///
+/// Libraries must be filtered here rather than in the frontend: filtering after
+/// paging would return fewer rows than the requested limit and break pagination.
+/// `prefix` is the keyword that joins it to the query (`WHERE` or `AND`).
+fn library_clause(include_libraries: bool, prefix: &str) -> String {
+    if include_libraries {
+        String::new()
+    } else {
+        format!(
+            " {} (category_id IS NULL OR category_id <> '{}')",
+            prefix, LIBRARY_CATEGORY_ID
+        )
+    }
+}
+
 /// Search the catalog by name or author. Returns up to `limit` results.
 pub fn search_catalog(
     conn: &Connection,
     query: &str,
     limit: i64,
     offset: i64,
+    include_libraries: bool,
 ) -> Result<Vec<CatalogAddon>, String> {
     let pattern = format!("%{}%", query);
+    let sql = format!(
+        "SELECT {}
+         FROM catalog_addons
+         WHERE (name LIKE ?1 OR author LIKE ?1){}
+         ORDER BY downloads DESC
+         LIMIT ?2 OFFSET ?3",
+        CATALOG_COLUMNS,
+        library_clause(include_libraries, "AND")
+    );
     let mut stmt = conn
-        .prepare(
-            "SELECT uid, name, version, date, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
-             FROM catalog_addons
-             WHERE name LIKE ?1 OR author LIKE ?1
-             ORDER BY downloads DESC
-             LIMIT ?2 OFFSET ?3",
-        )
+        .prepare(&sql)
         .map_err(|e| format!("Failed to prepare search: {}", e))?;
 
     let rows = stmt
@@ -183,14 +206,18 @@ pub fn browse_catalog(
     conn: &Connection,
     limit: i64,
     offset: i64,
+    include_libraries: bool,
 ) -> Result<Vec<CatalogAddon>, String> {
+    let sql = format!(
+        "SELECT {}
+         FROM catalog_addons{}
+         ORDER BY downloads DESC
+         LIMIT ?1 OFFSET ?2",
+        CATALOG_COLUMNS,
+        library_clause(include_libraries, "WHERE")
+    );
     let mut stmt = conn
-        .prepare(
-            "SELECT uid, name, version, date, downloads, favorites, downloads_monthly, directories, category_id, author, download_url, file_info_url
-             FROM catalog_addons
-             ORDER BY downloads DESC
-             LIMIT ?1 OFFSET ?2",
-        )
+        .prepare(&sql)
         .map_err(|e| format!("Failed to prepare browse: {}", e))?;
 
     let rows = stmt
@@ -722,7 +749,7 @@ mod tests {
         assert_eq!(catalog_count(&conn).unwrap(), 1);
 
         // Verify the data actually changed
-        let results = search_catalog(&conn, "Addon One Updated", 10, 0).unwrap();
+        let results = search_catalog(&conn, "Addon One Updated", 10, 0, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].version, Some("2.0".to_string()));
     }
@@ -745,7 +772,7 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = search_catalog(&conn, "Awesome", 10, 0).unwrap();
+        let results = search_catalog(&conn, "Awesome", 10, 0, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Awesome Addon");
     }
@@ -759,7 +786,7 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = search_catalog(&conn, "Bob", 10, 0).unwrap();
+        let results = search_catalog(&conn, "Bob", 10, 0, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].name, "Addon B");
     }
@@ -772,7 +799,7 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = search_catalog(&conn, "zzzzz", 10, 0).unwrap();
+        let results = search_catalog(&conn, "zzzzz", 10, 0, true).unwrap();
         assert!(results.is_empty());
     }
 
@@ -788,12 +815,12 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let page1 = browse_catalog(&conn, 2, 0).unwrap();
+        let page1 = browse_catalog(&conn, 2, 0, true).unwrap();
         assert_eq!(page1.len(), 2);
         assert_eq!(page1[0].name, "A"); // 300 downloads
         assert_eq!(page1[1].name, "B"); // 200 downloads
 
-        let page2 = browse_catalog(&conn, 2, 2).unwrap();
+        let page2 = browse_catalog(&conn, 2, 2, true).unwrap();
         assert_eq!(page2.len(), 2);
         assert_eq!(page2[0].name, "C"); // 100 downloads
     }
@@ -808,10 +835,115 @@ mod tests {
         ];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = browse_catalog(&conn, 10, 0).unwrap();
+        let results = browse_catalog(&conn, 10, 0, true).unwrap();
         assert_eq!(results[0].name, "High");
         assert_eq!(results[1].name, "Mid");
         assert_eq!(results[2].name, "Low");
+    }
+
+    #[test]
+    fn test_browse_catalog_excludes_libraries() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("1", "Popular Lib", None, 1000, None, Some("53"), None, None),
+            catalog_row("2", "Addon", None, 500, None, Some("12"), None, None),
+            catalog_row("3", "Uncategorized", None, 100, None, None, None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let all = browse_catalog(&conn, 10, 0, true).unwrap();
+        assert_eq!(all.len(), 3);
+
+        let without_libs = browse_catalog(&conn, 10, 0, false).unwrap();
+        let names: Vec<&str> = without_libs.iter().map(|a| a.name.as_str()).collect();
+        // Rows with no category are not libraries and must survive the filter.
+        assert_eq!(names, vec!["Addon", "Uncategorized"]);
+    }
+
+    #[test]
+    fn test_browse_catalog_pagination_fills_pages_when_libraries_excluded() {
+        let conn = test_db();
+        // Libraries interleaved with regular addons, ordered by downloads.
+        let rows = vec![
+            catalog_row("1", "A", None, 900, None, Some("12"), None, None),
+            catalog_row("2", "Lib1", None, 800, None, Some("53"), None, None),
+            catalog_row("3", "B", None, 700, None, Some("12"), None, None),
+            catalog_row("4", "Lib2", None, 600, None, Some("53"), None, None),
+            catalog_row("5", "C", None, 500, None, Some("12"), None, None),
+            catalog_row("6", "D", None, 400, None, Some("12"), None, None),
+            catalog_row("7", "E", None, 300, None, Some("12"), None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        // Each page is full even though libraries sit between the visible rows.
+        let page1 = browse_catalog(&conn, 2, 0, false).unwrap();
+        assert_eq!(
+            page1.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["A", "B"]
+        );
+
+        let page2 = browse_catalog(&conn, 2, 2, false).unwrap();
+        assert_eq!(
+            page2.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["C", "D"]
+        );
+
+        // Last page is short, which is how the UI knows to stop.
+        let page3 = browse_catalog(&conn, 2, 4, false).unwrap();
+        assert_eq!(
+            page3.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
+            vec!["E"]
+        );
+    }
+
+    #[test]
+    fn test_search_catalog_excludes_libraries() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("1", "Map Library", None, 1000, None, Some("53"), None, None),
+            catalog_row("2", "Map Pins", None, 500, None, Some("12"), None, None),
+            catalog_row("3", "Inventory", None, 400, None, Some("12"), None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        let all = search_catalog(&conn, "Map", 10, 0, true).unwrap();
+        assert_eq!(all.len(), 2);
+
+        let without_libs = search_catalog(&conn, "Map", 10, 0, false).unwrap();
+        assert_eq!(without_libs.len(), 1);
+        assert_eq!(without_libs[0].name, "Map Pins");
+    }
+
+    #[test]
+    fn test_search_catalog_pagination_with_libraries_excluded() {
+        let conn = test_db();
+        let rows = vec![
+            catalog_row("1", "Map Lib", None, 900, None, Some("53"), None, None),
+            catalog_row("2", "Map One", None, 800, None, Some("12"), None, None),
+            catalog_row("3", "Map Two", None, 700, None, Some("12"), None, None),
+            catalog_row("4", "Other", None, 600, None, Some("12"), None, None),
+        ];
+        upsert_catalog(&conn, &rows).unwrap();
+
+        // The library must not consume a slot on the first page.
+        let page1 = search_catalog(&conn, "Map", 1, 0, false).unwrap();
+        assert_eq!(page1.len(), 1);
+        assert_eq!(page1[0].name, "Map One");
+
+        let page2 = search_catalog(&conn, "Map", 1, 1, false).unwrap();
+        assert_eq!(page2.len(), 1);
+        assert_eq!(page2[0].name, "Map Two");
+
+        let page3 = search_catalog(&conn, "Map", 1, 2, false).unwrap();
+        assert!(page3.is_empty());
+    }
+
+    #[test]
+    fn test_library_clause() {
+        assert_eq!(library_clause(true, "WHERE"), "");
+        assert_eq!(library_clause(true, "AND"), "");
+        assert!(library_clause(false, "WHERE").starts_with(" WHERE "));
+        assert!(library_clause(false, "AND").contains(LIBRARY_CATEGORY_ID));
     }
 
     #[test]
@@ -958,7 +1090,7 @@ mod tests {
         )];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = search_catalog(&conn, "My Addon", 10, 0).unwrap();
+        let results = search_catalog(&conn, "My Addon", 10, 0, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].date, Some(1_700_000_000_000));
     }
@@ -977,7 +1109,7 @@ mod tests {
         )];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = browse_catalog(&conn, 10, 0).unwrap();
+        let results = browse_catalog(&conn, 10, 0, true).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].date, Some(1_700_000_000_000));
     }
@@ -996,7 +1128,7 @@ mod tests {
         )];
         upsert_catalog(&conn, &rows).unwrap();
 
-        let results = search_catalog(&conn, "No Date", 10, 0).unwrap();
+        let results = search_catalog(&conn, "No Date", 10, 0, true).unwrap();
         assert_eq!(results[0].date, None);
     }
 
