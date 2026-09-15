@@ -16,6 +16,7 @@ export function SettingsPage() {
   const [autostartBusy, setAutostartBusy] = useState<boolean>(false);
   const [startMinimized, setStartMinimized] = useState<boolean>(true);
   const [startupStatus, setStartupStatus] = useState<string>("");
+  const [logsStatus, setLogsStatus] = useState<string>("");
   const autostartEnabled = autostartStatus === "enabled";
 
   useEffect(() => {
@@ -144,6 +145,15 @@ export function SettingsPage() {
       setTimeout(() => setStartupStatus(""), 2000);
     } catch (err) {
       setStartupStatus(`Error: ${err}`);
+    }
+  };
+
+  const handleOpenLogsFolder = async () => {
+    setLogsStatus("");
+    try {
+      await invoke("open_logs_folder");
+    } catch (err) {
+      setLogsStatus(`Error: ${err}`);
     }
   };
 
@@ -293,6 +303,26 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className="rounded-lg bg-[var(--bg-card)] p-4">
+        <div className="flex items-center justify-between">
+          <label className="block text-sm font-medium text-[var(--text-secondary)]">
+            Logs
+          </label>
+          {logsStatus && (
+            <span className="text-xs text-[var(--teal)]">{logsStatus}</span>
+          )}
+        </div>
+        <p className="mt-1 text-xs text-[var(--text-secondary)]">
+          Grimoire records installs, updates and catalog syncs in a log file. Include it when reporting a problem.
+        </p>
+        <button
+          onClick={handleOpenLogsFolder}
+          className="mt-3 rounded bg-[var(--accent)] px-4 py-2 text-sm font-medium text-white transition hover:brightness-110"
+        >
+          Open logs folder
+        </button>
       </div>
     </div>
   );

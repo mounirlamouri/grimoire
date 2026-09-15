@@ -1,12 +1,15 @@
 use crate::config::api_version;
 use crate::config::autostart::{self, AutostartEntry, AutostartStatus};
+use crate::config::dirs::grimoire_data_dir;
 use crate::config::paths;
 use crate::config::settings::{load_settings, save_settings};
 use crate::db;
+use crate::logging;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub fn get_addon_path(app_handle: tauri::AppHandle) -> Option<String> {
@@ -149,4 +152,15 @@ pub fn get_file_info_urls(
     let db_state = app_handle.state::<Mutex<Connection>>();
     let conn = db_state.lock().map_err(|e| format!("DB lock error: {}", e))?;
     db::lookup_file_info_urls_by_dir_names(&conn, &dir_names)
+}
+
+/// Opens Grimoire's logs folder in the system file manager. Opening from Rust
+/// avoids granting the webview a scope for `opener:allow-open-path`.
+#[tauri::command]
+pub fn open_logs_folder(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let dir = logging::ensure_log_dir(&grimoire_data_dir(&app_handle))?;
+    app_handle
+        .opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| format!("Failed to open logs folder {}: {}", dir.display(), e))
 }

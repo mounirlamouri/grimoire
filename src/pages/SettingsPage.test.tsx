@@ -159,3 +159,53 @@ describe("SettingsPage startup", () => {
     expect(callsTo("set_autostart_enabled")).toHaveLength(0);
   });
 });
+
+describe("SettingsPage logs", () => {
+  it("opens the logs folder", async () => {
+    mockBackend({ open_logs_folder: null });
+    await renderSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open logs folder" }));
+
+    await waitFor(() => expect(callsTo("open_logs_folder")).toHaveLength(1));
+    expect(mockInvoke).toHaveBeenCalledWith("open_logs_folder");
+    expect(screen.queryByText(/^Error:/)).toBeNull();
+  });
+
+  it("shows the error when the logs folder cannot be opened", async () => {
+    mockBackend({
+      open_logs_folder: () => {
+        throw "Failed to open logs folder C:/Grimoire/logs: no file manager";
+      },
+    });
+    await renderSettings();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open logs folder" }));
+
+    expect(
+      await screen.findByText("Error: Failed to open logs folder C:/Grimoire/logs: no file manager")
+    ).toBeInTheDocument();
+  });
+
+  it("clears a previous error when opening succeeds", async () => {
+    let fail = true;
+    mockBackend({
+      open_logs_folder: () => {
+        if (fail) throw "Failed to open logs folder";
+      },
+    });
+    await renderSettings();
+    const button = screen.getByRole("button", { name: "Open logs folder" });
+
+    fireEvent.click(button);
+    expect(await screen.findByText("Error: Failed to open logs folder")).toBeInTheDocument();
+
+    fail = false;
+    fireEvent.click(button);
+
+    await waitFor(() => expect(callsTo("open_logs_folder")).toHaveLength(2));
+    await waitFor(() =>
+      expect(screen.queryByText("Error: Failed to open logs folder")).toBeNull()
+    );
+  });
+});

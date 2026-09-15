@@ -61,6 +61,56 @@ pub async fn prepare_install_context(
     Ok((addon_path, client, visited))
 }
 
+/// One-line summary of an install result for the log file.
+fn summarize_install(result: &InstallResult) -> String {
+    let mut parts = vec![format!("installed {}", result.installed_dirs.join(", "))];
+    if !result.auto_installed_deps.is_empty() {
+        let names: Vec<_> = result
+            .auto_installed_deps
+            .iter()
+            .map(|d| d.dir_name.as_str())
+            .collect();
+        parts.push(format!("auto-installed deps: {}", names.join(", ")));
+    }
+    if !result.missing_deps.is_empty() {
+        parts.push(format!("missing deps: {}", result.missing_deps.join(", ")));
+    }
+    if !result.failed_deps.is_empty() {
+        let failures: Vec<_> = result
+            .failed_deps
+            .iter()
+            .map(|d| format!("{} ({})", d.dir_name, d.error))
+            .collect();
+        parts.push(format!("failed deps: {}", failures.join(", ")));
+    }
+    parts.join("; ")
+}
+
+/// Logs the outcome of an install or update (`action`) of addon `uid`.
+/// Dependency problems are logged as warnings, a failed install as an error.
+pub fn log_install_outcome(action: &str, uid: &str, result: &Result<InstallResult, String>) {
+    match result {
+        Ok(r) if r.missing_deps.is_empty() && r.failed_deps.is_empty() => {
+            log::info!("{} of addon {} succeeded: {}", action, uid, summarize_install(r))
+        }
+        Ok(r) => log::warn!(
+            "{} of addon {} finished with dependency problems: {}",
+            action,
+            uid,
+            summarize_install(r)
+        ),
+        Err(e) => log::error!("{} of addon {} failed: {}", action, uid, e),
+    }
+}
+
+async fn install_by_uid(
+    app_handle: &tauri::AppHandle,
+    uid: &str,
+) -> Result<InstallResult, String> {
+    let (addon_path, mut client, mut visited) = prepare_install_context(app_handle).await?;
+    install_addon_internal(app_handle, &mut client, &addon_path, uid, &mut visited).await
+}
+
 /// Install an addon by its UID from the catalog.
 /// After installing, resolves and auto-installs missing dependencies.
 #[tauri::command]
@@ -68,8 +118,9 @@ pub async fn install_addon(
     app_handle: tauri::AppHandle,
     uid: String,
 ) -> Result<InstallResult, String> {
-    let (addon_path, mut client, mut visited) = prepare_install_context(&app_handle).await?;
-    install_addon_internal(&app_handle, &mut client, &addon_path, &uid, &mut visited).await
+    let result = install_by_uid(&app_handle, &uid).await;
+    log_install_outcome("Install", &uid, &result);
+    result
 }
 
 /// Internal recursive install function that resolves dependencies.
@@ -243,7 +294,9 @@ pub async fn update_addon(
     app_handle: tauri::AppHandle,
     uid: String,
 ) -> Result<InstallResult, String> {
-    install_addon(app_handle, uid).await
+    let result = install_by_uid(&app_handle, &uid).await;
+    log_install_outcome("Update", &uid, &result);
+    result
 }
 
 /// Install missing dependencies for an addon, given a list of dir_names.
@@ -389,7 +442,9 @@ pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result
         .or_else(|| paths::detect_addon_path())
         .ok_or("ESO addon path not configured. Go to Settings to set it.")?;
 
-    installer::uninstall_addon(&addon_path, &dir_name)?;
+    installer::uninstall_addon(&addon_path, &dir_name)
+        .inspect_err(|e| log::error!("Uninstall of {} failed: {}", dir_name, e))?;
+    log::info!("Uninstalled {}", dir_name);
 
     // Clean up installed version record
     let db_state = app_handle.state::<Mutex<Connection>>();
@@ -403,6 +458,41 @@ pub fn uninstall_addon(app_handle: tauri::AppHandle, dir_name: String) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn install_result(installed_dirs: &[&str]) -> InstallResult {
+        InstallResult {
+            installed_dirs: installed_dirs.iter().map(|d| d.to_string()).collect(),
+            auto_installed_deps: Vec::new(),
+            missing_deps: Vec::new(),
+            failed_deps: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn summarize_install_lists_installed_dirs() {
+        let result = install_result(&["MyAddon", "MyAddon_Extras"]);
+        assert_eq!(summarize_install(&result), "installed MyAddon, MyAddon_Extras");
+    }
+
+    #[test]
+    fn summarize_install_includes_dependency_outcomes() {
+        let mut result = install_result(&["MyAddon"]);
+        result.auto_installed_deps = ["LibAddonMenu-2.0", "LibCustomMenu"]
+            .iter()
+            .map(|d| AutoInstalledDep { dir_name: d.to_string(), name: d.to_string() })
+            .collect();
+        result.missing_deps = vec!["LibGone".to_string()];
+        result.failed_deps = vec![FailedDep {
+            dir_name: "LibBroken".to_string(),
+            error: "Download failed".to_string(),
+        }];
+
+        assert_eq!(
+            summarize_install(&result),
+            "installed MyAddon; auto-installed deps: LibAddonMenu-2.0, LibCustomMenu; \
+             missing deps: LibGone; failed deps: LibBroken (Download failed)"
+        );
+    }
 
     #[test]
     fn parse_esoui_url_standard() {

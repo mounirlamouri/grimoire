@@ -3,6 +3,7 @@ pub mod commands;
 mod config;
 pub mod db;
 mod esoui;
+mod logging;
 pub mod resolver;
 mod tray;
 
@@ -30,17 +31,23 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
-            // Initialize SQLite database
             let app_dir = grimoire_data_dir(app.handle());
             std::fs::create_dir_all(&app_dir).ok();
+
+            // Logs live next to catalog.db so GRIMOIRE_DATA_DIR isolates them
+            // too. A broken log file must not keep Grimoire from starting.
+            let log_dir = logging::log_dir(&app_dir);
+            if let Err(e) = app.handle().plugin(logging::plugin(&log_dir)) {
+                eprintln!("Failed to set up logging in {}: {}", log_dir.display(), e);
+            }
+            log::info!(
+                "Starting Grimoire {} ({} {})",
+                app.package_info().version,
+                std::env::consts::OS,
+                std::env::consts::ARCH
+            );
+
+            // Initialize SQLite database
             let db_path = app_dir.join("catalog.db");
             let conn = db::open_db(&db_path)
                 .expect("failed to open catalog database");
@@ -104,6 +111,7 @@ pub fn run() {
             commands::settings::get_current_api_version,
             commands::settings::get_catalog_dates,
             commands::settings::get_file_info_urls,
+            commands::settings::open_logs_folder,
             commands::updates::check_for_updates,
             commands::updates::bootstrap_addon_dates,
             commands::install::install_addon,

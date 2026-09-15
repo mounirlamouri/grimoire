@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
-use super::install::{install_addon_internal, prepare_install_context};
+use super::install::{install_addon_internal, log_install_outcome, prepare_install_context};
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ImportEntry {
@@ -271,9 +271,11 @@ pub async fn import_install_addons(
             continue;
         };
 
-        match install_addon_internal(&app_handle, &mut client, &addon_path, &uid, &mut visited)
-            .await
-        {
+        let install =
+            install_addon_internal(&app_handle, &mut client, &addon_path, &uid, &mut visited)
+                .await;
+        log_install_outcome("Install", &uid, &install);
+        match install {
             Ok(_install_result) => {
                 result.installed.push(dir_name);
             }

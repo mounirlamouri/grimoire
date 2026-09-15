@@ -27,6 +27,17 @@ pub struct CatalogStatus {
 
 #[tauri::command]
 pub async fn sync_catalog(app_handle: tauri::AppHandle) -> Result<i64, String> {
+    // Background syncs only report failures to the console, so log both
+    // outcomes. Syncs run hours apart, so this is not noisy.
+    let result = sync_catalog_inner(app_handle).await;
+    match &result {
+        Ok(count) => log::info!("Catalog sync succeeded: {} addons", count),
+        Err(e) => log::error!("Catalog sync failed: {}", e),
+    }
+    result
+}
+
+async fn sync_catalog_inner(app_handle: tauri::AppHandle) -> Result<i64, String> {
     let emit = |stage: &str, detail: &str, progress: f64| {
         let _ = app_handle.emit(
             "catalog-sync-progress",
