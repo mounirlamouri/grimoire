@@ -1,6 +1,7 @@
 use crate::addon::manifest;
 use crate::config::{paths, settings};
 use crate::db;
+use crate::http::{self, HttpTimeouts};
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -84,23 +85,30 @@ pub fn export_addon_list(
     Ok(text)
 }
 
+/// Server name used in user-facing error messages.
+const PASTE_SERVER_NAME: &str = "paste.rs";
+
 /// Upload text content to paste.rs. Returns the paste URL.
 #[tauri::command]
 pub async fn upload_to_paste(content: String) -> Result<String, String> {
-    let client = reqwest::Client::new();
-    let response = client
+    // Addon lists are small, so the whole request gets the small-request timeout.
+    let timeouts = HttpTimeouts::default();
+    let response = http::build_client(timeouts)
         .post("https://paste.rs/")
+        .timeout(timeouts.small_request)
         .body(content)
         .send()
         .await
-        .map_err(|e| format!("Failed to upload to paste.rs: {}", e))?;
+        .map_err(|e| http::describe_error("Failed to upload to paste.rs", PASTE_SERVER_NAME, &e))?;
 
     match response.status().as_u16() {
         201 => {
             let url = response
                 .text()
                 .await
-                .map_err(|e| format!("Failed to read paste.rs response: {}", e))?
+                .map_err(|e| {
+                    http::describe_error("Failed to read paste.rs response", PASTE_SERVER_NAME, &e)
+                })?
                 .trim()
                 .to_string();
             Ok(url)
@@ -132,12 +140,13 @@ pub async fn fetch_paste(url_or_id: String) -> Result<String, String> {
     let paste_id = paste_id.split('.').next().unwrap_or(&paste_id);
 
     let fetch_url = format!("https://paste.rs/{}", paste_id);
-    let client = reqwest::Client::new();
-    let response = client
+    let timeouts = HttpTimeouts::default();
+    let response = http::build_client(timeouts)
         .get(&fetch_url)
+        .timeout(timeouts.small_request)
         .send()
         .await
-        .map_err(|e| format!("Failed to fetch paste: {}", e))?;
+        .map_err(|e| http::describe_error("Failed to fetch paste", PASTE_SERVER_NAME, &e))?;
 
     if !response.status().is_success() {
         return Err(format!(
@@ -149,7 +158,7 @@ pub async fn fetch_paste(url_or_id: String) -> Result<String, String> {
     response
         .text()
         .await
-        .map_err(|e| format!("Failed to read paste content: {}", e))
+        .map_err(|e| http::describe_error("Failed to read paste content", PASTE_SERVER_NAME, &e))
 }
 
 /// Parse an addon list text and check each entry against the catalog and installed addons.

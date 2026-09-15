@@ -3,6 +3,7 @@ pub mod commands;
 mod config;
 pub mod db;
 mod esoui;
+mod http;
 mod logging;
 pub mod resolver;
 mod tray;
