@@ -35,7 +35,9 @@ static INSTALL_LOCK: Mutex<()> = Mutex::new(());
 /// as it was.
 ///
 /// An installed addon is never replaced by a download that lacks its
-/// manifest (see `refuse_partial_replacements`).
+/// manifest (see `refuse_partial_replacements`), and files that external
+/// tools keep fresh inside an addon's folder are carried over into the new
+/// version (see `PRESERVED_FILES`).
 ///
 /// Loose files at the ZIP root (e.g. a README next to the addon folder) are
 /// skipped and not part of the returned list: ESO only loads addons from
@@ -62,6 +64,7 @@ pub fn install_from_zip(zip_bytes: &[u8], addons_path: &Path) -> Result<Vec<Stri
 
     let result = extract_archive(&mut archive, &staging).and_then(|top_dirs| {
         refuse_partial_replacements(addons_path, &staging, &top_dirs)?;
+        carry_over_preserved_files(addons_path, &staging, &top_dirs)?;
         swap_into_place(addons_path, &staging, &backup, &top_dirs)?;
         Ok(top_dirs)
     });
@@ -164,6 +167,65 @@ fn refuse_partial_replacements(
             return Err(format!(
                 "Not replacing {name}: the download has no {name}.txt or {name}.addon manifest, so it isn't a full copy of the addon (it may be a patch for it)"
             ));
+        }
+    }
+    Ok(())
+}
+
+/// A file that a tool outside Grimoire writes at the root of an addon's
+/// folder, matched by name prefix and suffix.
+struct PreservedFile {
+    dir: &'static str,
+    prefix: &'static str,
+    suffix: &'static str,
+}
+
+/// Files that updates carry over from the installed folder instead of
+/// deleting them with it. Only list files that a tool keeps fresh on its own
+/// and the addon needs; everything else the new version doesn't ship is
+/// removed.
+///
+/// Tamriel Trade Centre's client (`TamrielTradeCentre/Client/Client.exe`)
+/// downloads the price tables and item lookup tables the addon loads into
+/// its folder. The ESOUI ZIP doesn't ship them, so without this an update
+/// would leave TTC without prices until the client runs again.
+const PRESERVED_FILES: &[PreservedFile] = &[
+    PreservedFile { dir: "TamrielTradeCentre", prefix: "PriceTable", suffix: ".lua" },
+    PreservedFile { dir: "TamrielTradeCentre", prefix: "ItemLookUpTable_", suffix: ".lua" },
+];
+
+/// Copy the `PRESERVED_FILES` of each installed dir in `dirs` into its staged
+/// replacement. The installed copy wins over one shipped in the ZIP, since the
+/// tool that writes it keeps it more current. Copying rather than moving
+/// leaves the installed dir intact if the install fails later.
+fn carry_over_preserved_files(
+    addons_path: &Path,
+    staging: &Path,
+    dirs: &[String],
+) -> Result<(), String> {
+    for name in dirs {
+        let rules: Vec<_> = PRESERVED_FILES
+            .iter()
+            .filter(|r| r.dir == name.as_str())
+            .collect();
+        if rules.is_empty() {
+            continue;
+        }
+        let Ok(entries) = fs::read_dir(addons_path.join(name)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            let is_file = entry.file_type().map(|t| t.is_file()).unwrap_or(false);
+            let preserved = rules
+                .iter()
+                .any(|r| file_name.starts_with(r.prefix) && file_name.ends_with(r.suffix));
+            if !is_file || !preserved {
+                continue;
+            }
+            fs::copy(entry.path(), staging.join(name).join(&file_name)).map_err(|e| {
+                format!("Failed to keep {}/{} across the update: {}", name, file_name, e)
+            })?;
         }
     }
     Ok(())
@@ -548,6 +610,74 @@ mod tests {
 
         assert!(!dir.path().join("MyData/old.lua").exists());
         assert_eq!(fs::read_to_string(dir.path().join("MyData/new.lua")).unwrap(), "new");
+    }
+
+    #[test]
+    fn test_update_keeps_ttc_client_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        let ttc = dir.path().join("TamrielTradeCentre");
+        let v1 = create_test_zip(&[
+            ("TamrielTradeCentre/TamrielTradeCentre.txt", b"## Version: 1.0\n"),
+            ("TamrielTradeCentre/old.lua", b"-- dropped in v2\n"),
+        ]);
+        install_from_zip(&v1, dir.path()).unwrap();
+        // Written by the TTC client after install
+        fs::write(ttc.join("PriceTableNA.lua"), "-- prices").unwrap();
+        fs::write(ttc.join("ItemLookUpTable_EN.lua"), "-- lookup").unwrap();
+        fs::create_dir_all(ttc.join("Client").join("ErrorLog")).unwrap();
+        fs::write(ttc.join("Client").join("ErrorLog").join("2026-01-23.log"), "error").unwrap();
+
+        let v2 = create_test_zip(&[
+            ("TamrielTradeCentre/TamrielTradeCentre.txt", b"## Version: 2.0\n"),
+            ("TamrielTradeCentre/Client/Client.exe", b"exe"),
+        ]);
+        install_from_zip(&v2, dir.path()).unwrap();
+
+        assert_eq!(fs::read_to_string(ttc.join("PriceTableNA.lua")).unwrap(), "-- prices");
+        assert_eq!(fs::read_to_string(ttc.join("ItemLookUpTable_EN.lua")).unwrap(), "-- lookup");
+        assert_eq!(
+            fs::read_to_string(ttc.join("TamrielTradeCentre.txt")).unwrap(),
+            "## Version: 2.0\n"
+        );
+        // Everything else the new version doesn't ship is still removed
+        assert!(!ttc.join("old.lua").exists());
+        assert!(!ttc.join("Client").join("ErrorLog").exists());
+        assert_eq!(entry_names(dir.path()), vec!["TamrielTradeCentre"]);
+    }
+
+    #[test]
+    fn test_preserved_file_keeps_installed_copy_over_zip_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = create_test_zip(&[(
+            "TamrielTradeCentre/TamrielTradeCentre.txt",
+            b"## Version: 1.0\n",
+        )]);
+        install_from_zip(&v1, dir.path()).unwrap();
+        fs::write(dir.path().join("TamrielTradeCentre/PriceTable.lua"), "client").unwrap();
+
+        let v2 = create_test_zip(&[
+            ("TamrielTradeCentre/TamrielTradeCentre.txt", b"## Version: 2.0\n"),
+            ("TamrielTradeCentre/PriceTable.lua", b"zip"),
+        ]);
+        install_from_zip(&v2, dir.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("TamrielTradeCentre/PriceTable.lua")).unwrap(),
+            "client"
+        );
+    }
+
+    #[test]
+    fn test_preserved_files_only_apply_to_their_addon() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = create_test_zip(&[("OtherAddon/OtherAddon.txt", b"## Version: 1.0\n")]);
+        install_from_zip(&v1, dir.path()).unwrap();
+        fs::write(dir.path().join("OtherAddon/PriceTableNA.lua"), "stale").unwrap();
+
+        let v2 = create_test_zip(&[("OtherAddon/OtherAddon.txt", b"## Version: 2.0\n")]);
+        install_from_zip(&v2, dir.path()).unwrap();
+
+        assert!(!dir.path().join("OtherAddon/PriceTableNA.lua").exists());
     }
 
     #[test]
