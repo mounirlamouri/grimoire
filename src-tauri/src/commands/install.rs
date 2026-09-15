@@ -1,7 +1,7 @@
 use crate::addon::{installer, manifest};
 use crate::config::{paths, settings};
 use crate::db;
-use crate::esoui::api::EsoUiClient;
+use crate::esoui::api::{EsoUiClient, SharedEsoUiClient};
 use rusqlite::Connection;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -34,8 +34,8 @@ pub struct FailedDep {
     pub error: String,
 }
 
-/// Resolve the addon path, initialize the ESOUI client, and seed the visited set.
-/// Shared setup for install_addon and batch import.
+/// Resolve the addon path, get an initialized copy of the shared ESOUI client,
+/// and seed the visited set. Shared setup for install_addon and batch import.
 pub async fn prepare_install_context(
     app_handle: &tauri::AppHandle,
 ) -> Result<(PathBuf, EsoUiClient, HashSet<String>), String> {
@@ -46,8 +46,7 @@ pub async fn prepare_install_context(
         .or_else(|| paths::detect_addon_path())
         .ok_or("ESO addon path not configured. Go to Settings to set it.")?;
 
-    let mut client = EsoUiClient::new();
-    client.init().await?;
+    let client = app_handle.state::<SharedEsoUiClient>().client().await?;
 
     let mut visited: HashSet<String> = HashSet::new();
     if let Ok(entries) = std::fs::read_dir(&addon_path) {
@@ -107,8 +106,8 @@ async fn install_by_uid(
     app_handle: &tauri::AppHandle,
     uid: &str,
 ) -> Result<InstallResult, String> {
-    let (addon_path, mut client, mut visited) = prepare_install_context(app_handle).await?;
-    install_addon_internal(app_handle, &mut client, &addon_path, uid, &mut visited).await
+    let (addon_path, client, mut visited) = prepare_install_context(app_handle).await?;
+    install_addon_internal(app_handle, &client, &addon_path, uid, &mut visited).await
 }
 
 /// Install an addon by its UID from the catalog.
@@ -126,7 +125,7 @@ pub async fn install_addon(
 /// Internal recursive install function that resolves dependencies.
 pub fn install_addon_internal<'a>(
     app_handle: &'a tauri::AppHandle,
-    client: &'a mut EsoUiClient,
+    client: &'a EsoUiClient,
     addon_path: &'a Path,
     uid: &'a str,
     visited: &'a mut HashSet<String>,

@@ -17,6 +17,9 @@ fn global_config_url() -> String {
         .unwrap_or_else(|_| DEFAULT_GLOBAL_CONFIG_URL.to_string())
 }
 
+/// Cheap to clone: `reqwest::Client` is reference-counted, so copies share one
+/// connection pool.
+#[derive(Clone)]
 pub struct EsoUiClient {
     client: Client,
     global_config_url: String,
@@ -42,7 +45,8 @@ impl EsoUiClient {
         }
     }
 
-    /// Discover the MMOUI API feeds for ESO.
+    /// Discover the MMOUI API feeds for ESO. On failure, feeds from an earlier
+    /// successful call are kept.
     pub async fn init(&mut self) -> Result<(), String> {
         let config: GlobalConfigResponse = self
             .get_json(&self.global_config_url, "global config", Some(self.small_request_timeout))
@@ -137,10 +141,49 @@ impl EsoUiClient {
     }
 }
 
+/// The app-wide ESOUI client kept in Tauri state. Feed discovery (`init`) runs
+/// once and installs, updates, imports and metadata fetches reuse the result
+/// instead of making two extra requests each time.
+pub struct SharedEsoUiClient {
+    client: tokio::sync::Mutex<EsoUiClient>,
+}
+
+impl SharedEsoUiClient {
+    pub fn new(client: EsoUiClient) -> Self {
+        Self {
+            client: tokio::sync::Mutex::new(client),
+        }
+    }
+
+    /// Return a copy of the client with the API feeds discovered, running
+    /// `init()` first if it hasn't succeeded yet. A failed init isn't cached,
+    /// so the next call retries.
+    ///
+    /// The lock is only held while initializing: concurrent first callers
+    /// share one init, and long installs using their copy block no one.
+    pub async fn client(&self) -> Result<EsoUiClient, String> {
+        let mut client = self.client.lock().await;
+        if !client.is_initialized() {
+            client.init().await?;
+        }
+        Ok(client.clone())
+    }
+
+    /// Re-discover the API feeds even if already initialized and return a copy
+    /// of the refreshed client. If that fails, the cached feeds are kept.
+    pub async fn refresh(&self) -> Result<EsoUiClient, String> {
+        let mut client = self.client.lock().await;
+        client.init().await?;
+        Ok(client.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::http::test_server;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpStream;
 
@@ -286,6 +329,89 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes, BODY);
+    }
+
+    /// Mock MMOUI API that counts global config requests (one per `init`) and
+    /// serves addon details for any UID. Global config requests whose 0-based
+    /// index is in `failing_inits` get an HTTP 500 with a non-JSON body.
+    async fn spawn_counting_api(failing_inits: &'static [usize]) -> (String, Arc<AtomicUsize>) {
+        let inits = Arc::new(AtomicUsize::new(0));
+        let counter = inits.clone();
+        let base_url = test_server::spawn(move |stream, path| {
+            let counter = counter.clone();
+            async move {
+                if path == "/globalconfig.json"
+                    && failing_inits.contains(&counter.fetch_add(1, Ordering::SeqCst))
+                {
+                    test_server::respond(stream, 500, "Internal Server Error").await;
+                    return;
+                }
+                if let Some(stream) = serve_configs(stream, &path).await {
+                    test_server::respond(stream, 200, r#"[{"UID":"1","UIName":"Mock"}]"#).await;
+                }
+            }
+        })
+        .await;
+        (base_url, inits)
+    }
+
+    fn shared_client_for(base_url: &str) -> SharedEsoUiClient {
+        SharedEsoUiClient::new(client_for(base_url, short_timeouts(5_000, 5_000)))
+    }
+
+    #[tokio::test]
+    async fn shared_client_initializes_once() {
+        let (base_url, inits) = spawn_counting_api(&[]).await;
+        let shared = shared_client_for(&base_url);
+
+        // Concurrent first callers wait for a single init.
+        let (a, b) = tokio::join!(shared.client(), shared.client());
+        let c = shared.client().await.unwrap();
+        assert_eq!(inits.load(Ordering::SeqCst), 1);
+
+        for client in [a.unwrap(), b.unwrap(), c] {
+            let details = client.fetch_addon_details("1").await.unwrap();
+            assert_eq!(details[0].ui_name, "Mock");
+        }
+        assert_eq!(inits.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn shared_client_retries_failed_init() {
+        let (base_url, inits) = spawn_counting_api(&[0]).await;
+        let shared = shared_client_for(&base_url);
+
+        let Err(err) = shared.client().await else {
+            panic!("init should fail on HTTP 500");
+        };
+        assert!(err.starts_with("Failed to parse global config"), "{}", err);
+
+        let client = shared.client().await.unwrap();
+        assert!(client.is_initialized());
+        assert_eq!(inits.load(Ordering::SeqCst), 2);
+
+        shared.client().await.unwrap();
+        assert_eq!(inits.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn refresh_reinitializes_and_keeps_feeds_on_failure() {
+        let (base_url, inits) = spawn_counting_api(&[2]).await;
+        let shared = shared_client_for(&base_url);
+        shared.client().await.unwrap();
+
+        let refreshed = shared.refresh().await.unwrap();
+        assert!(refreshed.is_initialized());
+        assert_eq!(inits.load(Ordering::SeqCst), 2);
+
+        assert!(shared.refresh().await.is_err());
+        assert_eq!(inits.load(Ordering::SeqCst), 3);
+
+        // The feeds from the last successful init are still usable without
+        // another init.
+        let client = shared.client().await.unwrap();
+        client.fetch_addon_details("1").await.unwrap();
+        assert_eq!(inits.load(Ordering::SeqCst), 3);
     }
 
     #[test]

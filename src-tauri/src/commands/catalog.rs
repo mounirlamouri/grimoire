@@ -2,7 +2,7 @@ use crate::addon::manifest::scan_installed_addons;
 use crate::commands::updates::{bootstrap_untracked, compute_updates};
 use crate::config::{paths, settings};
 use crate::db::{self, CatalogAddon};
-use crate::esoui::api::EsoUiClient;
+use crate::esoui::api::SharedEsoUiClient;
 use crate::esoui::models::AddonDetails;
 use rusqlite::Connection;
 use std::path::PathBuf;
@@ -51,8 +51,9 @@ async fn sync_catalog_inner(app_handle: tauri::AppHandle) -> Result<i64, String>
 
     emit("init", "Connecting to ESOUI API...", 0.0);
 
-    let mut client = EsoUiClient::new();
-    client.init().await?;
+    // Syncing re-discovers the API feeds, so a long-running app picks up feed
+    // URL changes and later installs reuse the fresh feeds.
+    let client = app_handle.state::<SharedEsoUiClient>().refresh().await?;
 
     emit("fetch", "Downloading addon catalog...", 0.2);
 
@@ -214,11 +215,8 @@ pub async fn fetch_addon_metadata(
 
     // Step 2: Fetch stale/missing UIDs from API
     if !uids_to_fetch.is_empty() {
-        let client_state = app_handle.state::<tokio::sync::Mutex<EsoUiClient>>();
-        let mut client = client_state.lock().await;
-        if !client.is_initialized() {
-            client.init().await?;
-        }
+        // A copy of the shared client, so installs aren't blocked while these run.
+        let client = app_handle.state::<SharedEsoUiClient>().client().await?;
 
         // Fetch sequentially with a small batch to be polite to the API
         let mut fetched = Vec::new();

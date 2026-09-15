@@ -235,8 +235,8 @@ pub async fn import_install_addons(
         skipped: Vec::new(),
     };
 
-    // Initialize once: addon path, HTTP client, visited set
-    let (addon_path, mut client, mut visited) = prepare_install_context(&app_handle).await?;
+    // Set up once: addon path, ESOUI client, visited set
+    let (addon_path, client, mut visited) = prepare_install_context(&app_handle).await?;
 
     // Look up UIDs for all dir_names
     let uids: Vec<(String, Option<String>)> = {
@@ -281,8 +281,7 @@ pub async fn import_install_addons(
         };
 
         let install =
-            install_addon_internal(&app_handle, &mut client, &addon_path, &uid, &mut visited)
-                .await;
+            install_addon_internal(&app_handle, &client, &addon_path, &uid, &mut visited).await;
         log_install_outcome("Install", &uid, &install);
         match install {
             Ok(_install_result) => {

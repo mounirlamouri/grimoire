@@ -24,7 +24,7 @@ pub struct GameConfig {
 
 // Mirrors the MMOUI API response — fields kept for schema completeness.
 #[allow(dead_code)]
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub struct ApiFeeds {
     pub file_list: String,
