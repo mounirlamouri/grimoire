@@ -35,9 +35,11 @@ static INSTALL_LOCK: Mutex<()> = Mutex::new(());
 /// as it was.
 ///
 /// An installed addon is never replaced by a download that lacks its
-/// manifest (see `refuse_partial_replacements`), and files that external
-/// tools keep fresh inside an addon's folder are carried over into the new
-/// version (see `PRESERVED_FILES`).
+/// manifest (see `refuse_partial_replacements`), updates stop before
+/// touching anything while a program bundled with the addon is running (see
+/// `COMPANION_PROGRAMS`), and files that external tools keep fresh inside an
+/// addon's folder are carried over into the new version (see
+/// `PRESERVED_FILES`).
 ///
 /// Loose files at the ZIP root (e.g. a README next to the addon folder) are
 /// skipped and not part of the returned list: ESO only loads addons from
@@ -63,6 +65,7 @@ pub fn install_from_zip(zip_bytes: &[u8], addons_path: &Path) -> Result<Vec<Stri
     })?;
 
     let result = extract_archive(&mut archive, &staging).and_then(|top_dirs| {
+        refuse_running_companions(addons_path, &top_dirs)?;
         refuse_partial_replacements(addons_path, &staging, &top_dirs)?;
         carry_over_preserved_files(addons_path, &staging, &top_dirs)?;
         swap_into_place(addons_path, &staging, &backup, &top_dirs)?;
@@ -170,6 +173,63 @@ fn refuse_partial_replacements(
         }
     }
     Ok(())
+}
+
+/// A program that ships with an addon and runs from inside its folder.
+struct CompanionProgram {
+    dir: &'static str,
+    /// Path of the executable inside the addon's folder.
+    exe: &'static [&'static str],
+    /// How the program is named when asking the user to close it.
+    label: &'static str,
+}
+
+/// Programs that must not run while their addon is updated. Windows refuses
+/// to rename a folder a running program works in, and a folder moved aside
+/// can't be deleted while an executable in it runs, which would leave the old
+/// copy behind. Asking the user to close the program beats either outcome.
+const COMPANION_PROGRAMS: &[CompanionProgram] = &[CompanionProgram {
+    dir: "TamrielTradeCentre",
+    exe: &["Client", "Client.exe"],
+    label: "Tamriel Trade Centre's client",
+}];
+
+/// Refuse to update an addon whose bundled program is running.
+fn refuse_running_companions(addons_path: &Path, dirs: &[String]) -> Result<(), String> {
+    for name in dirs {
+        for program in COMPANION_PROGRAMS.iter().filter(|p| p.dir == name.as_str()) {
+            let exe = program
+                .exe
+                .iter()
+                .fold(addons_path.join(name), |path, part| path.join(part));
+            if is_running(&exe) {
+                return Err(format!(
+                    "{} is running. Close it ({}) and try the update again",
+                    program.label,
+                    exe.display()
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Whether `exe` looks like it is being run right now: a running executable
+/// can't be opened for writing (Windows reports a sharing violation, Unix
+/// ETXTBSY). Any other outcome means we can't tell, and the update goes ahead
+/// rather than blocking on a guess — including a Windows program run through
+/// Wine, which Linux doesn't lock, but where replacing the folder works anyway.
+fn is_running(exe: &Path) -> bool {
+    match fs::OpenOptions::new().write(true).open(exe) {
+        Ok(_) => false,
+        Err(e) => match e.raw_os_error() {
+            #[cfg(windows)]
+            Some(32) => true, // ERROR_SHARING_VIOLATION
+            #[cfg(unix)]
+            Some(26) => true, // ETXTBSY
+            _ => false,
+        },
+    }
 }
 
 /// A file that a tool outside Grimoire writes at the root of an addon's
@@ -665,6 +725,103 @@ mod tests {
             fs::read_to_string(dir.path().join("TamrielTradeCentre/PriceTable.lua")).unwrap(),
             "client"
         );
+    }
+
+    /// Kills the process when the test ends, however it ends.
+    #[cfg(windows)]
+    struct KillOnDrop(std::process::Child);
+
+    #[cfg(windows)]
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    /// Copy a system executable to `exe` and run it, so it holds the same lock
+    /// an addon's bundled program holds while it runs.
+    #[cfg(windows)]
+    fn run_copy_of_system_exe(exe: &Path) -> KillOnDrop {
+        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
+        fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        fs::copy(Path::new(&system_root).join("System32").join("PING.EXE"), exe).unwrap();
+        let running = KillOnDrop(
+            std::process::Command::new(exe)
+                .args(["-n", "30", "127.0.0.1"])
+                .spawn()
+                .unwrap(),
+        );
+        for _ in 0..50 {
+            if is_running(exe) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        running
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_update_refused_while_companion_program_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = create_test_zip(&[(
+            "TamrielTradeCentre/TamrielTradeCentre.txt",
+            b"## Version: 1.0\n",
+        )]);
+        install_from_zip(&v1, dir.path()).unwrap();
+        let exe = dir
+            .path()
+            .join("TamrielTradeCentre")
+            .join("Client")
+            .join("Client.exe");
+        let _client = run_copy_of_system_exe(&exe);
+        let before = snapshot(dir.path());
+
+        let v2 = create_test_zip(&[(
+            "TamrielTradeCentre/TamrielTradeCentre.txt",
+            b"## Version: 2.0\n",
+        )]);
+        let err = install_from_zip(&v2, dir.path()).unwrap_err();
+
+        assert!(
+            err.contains("Tamriel Trade Centre's client is running"),
+            "unexpected error: {}",
+            err
+        );
+        // Refused before anything was touched
+        assert_eq!(snapshot(dir.path()), before);
+    }
+
+    #[test]
+    fn test_update_allowed_when_companion_program_is_not_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let v1 = create_test_zip(&[
+            ("TamrielTradeCentre/TamrielTradeCentre.txt", b"## Version: 1.0\n"),
+            ("TamrielTradeCentre/Client/Client.exe", b"not running"),
+        ]);
+        install_from_zip(&v1, dir.path()).unwrap();
+
+        let v2 = create_test_zip(&[
+            ("TamrielTradeCentre/TamrielTradeCentre.txt", b"## Version: 2.0\n"),
+            ("TamrielTradeCentre/Client/Client.exe", b"not running"),
+        ]);
+        install_from_zip(&v2, dir.path()).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join("TamrielTradeCentre/TamrielTradeCentre.txt")).unwrap(),
+            "## Version: 2.0\n"
+        );
+    }
+
+    #[test]
+    fn test_is_running_is_false_for_a_plain_file_and_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Client.exe");
+        fs::write(&file, "not running").unwrap();
+
+        assert!(!is_running(&file));
+        assert!(!is_running(&dir.path().join("Missing.exe")));
     }
 
     #[test]
