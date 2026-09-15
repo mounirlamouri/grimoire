@@ -196,6 +196,64 @@ describe("AddonCard uninstall flow", () => {
       expect(onUninstall).toHaveBeenCalledWith("CoolAddon");
     });
   });
+
+  it("warns in the confirmation that dependent addons will stop loading", () => {
+    render(
+      <AddonCard
+        addon={makeAddon({ dir_name: "LibCool", title: "Lib Cool", is_library: true })}
+        dependents={[
+          makeAddon({ dir_name: "AddonA", title: "Addon A" }),
+          makeAddon({ dir_name: "AddonB", title: "Addon B" }),
+        ]}
+        {...defaultProps}
+      />
+    );
+    // Only shown once the user asks to uninstall
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Addon A, Addon B require this library and will stop loading if you uninstall it."
+    );
+  });
+
+  it("uses singular wording for a single dependent", () => {
+    render(
+      <AddonCard
+        addon={makeAddon()}
+        dependents={[makeAddon({ dir_name: "AddonA", title: "Addon A" })]}
+        {...defaultProps}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Addon A requires this addon and will stop loading if you uninstall it."
+    );
+  });
+
+  it("still uninstalls when the user confirms despite dependents", async () => {
+    const onUninstall = vi.fn(() => Promise.resolve());
+    render(
+      <AddonCard
+        addon={makeAddon({ dir_name: "LibCool", is_library: true })}
+        dependents={[makeAddon({ dir_name: "AddonA", title: "Addon A" })]}
+        {...defaultProps}
+        onUninstall={onUninstall}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Uninstall" })[1]);
+    await waitFor(() => {
+      expect(onUninstall).toHaveBeenCalledWith("LibCool");
+    });
+  });
+
+  it("shows no dependents warning when nothing depends on the addon", () => {
+    render(<AddonCard addon={makeAddon()} dependents={[]} {...defaultProps} />);
+    fireEvent.click(screen.getByRole("button", { name: "Uninstall" }));
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.queryByText(/will stop loading/)).not.toBeInTheDocument();
+  });
 });
 
 describe("AddonCard missing dependencies", () => {

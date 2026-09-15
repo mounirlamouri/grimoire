@@ -12,6 +12,7 @@ export function AddonCard({
   addon,
   update,
   missingDeps,
+  dependents,
   catalogDate,
   fileInfoUrl,
   addonPath,
@@ -29,6 +30,8 @@ export function AddonCard({
   addon: InstalledAddon;
   update?: AddonUpdate;
   missingDeps?: { fixable: string[]; unavailable: string[] };
+  /** Installed addons that require this one and would stop loading without it. */
+  dependents?: InstalledAddon[];
   catalogDate?: number | null;
   fileInfoUrl?: string | null;
   addonPath?: string | null;
@@ -316,26 +319,32 @@ export function AddonCard({
       )}
 
       {confirmingUninstall && (
-        <div
-          className="mt-3 flex items-center justify-between rounded border border-red-500/30 bg-red-500/5 p-3"
-        >
-          <span className="text-sm text-[var(--text-primary)]">
-            Uninstall <strong>{addon.title}</strong>?
-          </span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setConfirmingUninstall(false)}
-              className="rounded border border-[var(--teal-dim)]/30 px-3 py-1 text-xs text-[var(--text-secondary)] transition hover:bg-white/5"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={doUninstall}
-              className="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white transition hover:brightness-110"
-            >
-              Uninstall
-            </button>
+        <div className="mt-3 rounded border border-red-500/30 bg-red-500/5 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-[var(--text-primary)]">
+              Uninstall <strong>{addon.title}</strong>?
+            </span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setConfirmingUninstall(false)}
+                className="rounded border border-[var(--teal-dim)]/30 px-3 py-1 text-xs text-[var(--text-secondary)] transition hover:bg-white/5"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doUninstall}
+                className="rounded bg-red-500 px-3 py-1 text-xs font-medium text-white transition hover:brightness-110"
+              >
+                Uninstall
+              </button>
+            </div>
           </div>
+          {dependents && dependents.length > 0 && (
+            <p role="alert" className="mt-2 text-xs text-red-400">
+              {dependents.map((d) => d.title).join(", ")} {dependents.length === 1 ? "requires" : "require"} this{" "}
+              {addon.is_library ? "library" : "addon"} and will stop loading if you uninstall it.
+            </p>
+          )}
         </div>
       )}
     </div>

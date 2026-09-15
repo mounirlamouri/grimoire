@@ -1,7 +1,8 @@
 // Install/uninstall test: install MockAddon from the mock catalog, verify its
 // dependency MockLib is auto-installed, the files land in the temp AddOns
-// dir, and that uninstalling MockAddon leaves MockLib on disk (libraries are
-// not automatically removed).
+// dir, that uninstalling MockLib first warns that MockAddon depends on it,
+// and that uninstalling MockAddon leaves MockLib on disk (libraries are not
+// automatically removed).
 
 import { expect } from "@wdio/globals";
 import { existsSync } from "node:fs";
@@ -115,6 +116,56 @@ describe("Grimoire install/uninstall flow", () => {
     }
     const mockLibCard = await $("span=MockLib");
     await mockLibCard.waitForExist({ timeout: 5000 });
+  });
+
+  it("warns that MockAddon depends on MockLib before uninstalling it", async () => {
+    const installedTab = await $("button=installed");
+    await installedTab.click();
+
+    const filterInput = await $('input[placeholder="Filter addons..."]');
+    await filterInput.waitForExist({ timeout: 10000 });
+
+    // The previous test enabled "Show libraries", but the page remounts (and
+    // resets it) on some app events, so make sure it is still on.
+    const checkboxes = await $$('input[type="checkbox"]');
+    const showLibs = checkboxes[0];
+    if (!(await showLibs.isSelected())) {
+      await showLibs.click();
+    }
+
+    // Narrow the list to just MockLib so the Uninstall button is unambiguous.
+    await filterInput.setValue("MockLib");
+    await $("span=MockLib").waitForExist({ timeout: 5000 });
+    await browser.waitUntil(
+      async () => !(await $("span=MockAddon").isExisting()),
+      { timeout: 5000, timeoutMsg: "filter did not narrow the list to MockLib" }
+    );
+
+    const uninstallButton = await $("button=Uninstall");
+    await uninstallButton.waitForExist({ timeout: 5000 });
+    await uninstallButton.click();
+
+    // Re-query on each poll rather than caching the element, as
+    // WebKitWebDriver can throw stale-element errors during DOM transitions.
+    await browser.waitUntil(
+      async () => {
+        const warning = await $("p*=will stop loading");
+        return (await warning.isExisting()) && (await warning.getText()).includes("MockAddon");
+      },
+      { timeout: 5000, timeoutMsg: "dependents warning naming MockAddon never appeared" }
+    );
+
+    const cancelButton = await $("button=Cancel");
+    await cancelButton.click();
+    await browser.waitUntil(
+      async () => !(await $("p*=will stop loading").isExisting()),
+      { timeout: 5000, timeoutMsg: "uninstall confirmation still open after Cancel" }
+    );
+
+    // Nothing was removed. The filter is left on MockLib; the next test sets
+    // its own.
+    expect(existsSync(join(ADDONS_DIR, "MockLib", "MockLib.txt"))).toBe(true);
+    expect(existsSync(join(ADDONS_DIR, "MockAddon", "MockAddon.txt"))).toBe(true);
   });
 
   it("uninstalls MockAddon and leaves MockLib on disk", async () => {

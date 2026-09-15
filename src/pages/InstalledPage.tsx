@@ -10,6 +10,7 @@ import { ExportModal } from "../components/ExportModal";
 import { ImportModal } from "../components/ImportModal";
 import { UpdateProgressModal } from "../components/UpdateProgressModal";
 import { runBatchUpdate, summarizeBatchUpdate, type BatchProgress } from "../utils/batchUpdate";
+import { buildDependentsMap } from "../utils/dependents";
 
 export function InstalledPage({
   onError,
@@ -200,6 +201,7 @@ export function InstalledPage({
   }, [addons]);
 
   const updateMap = new Map(updates.map((u) => [u.dir_name, u]));
+  const dependentsMap = buildDependentsMap(addons);
 
   // Compute missing dependencies and check catalog availability
   const [missingDepsMap, setMissingDepsMap] = useState<Map<string, { fixable: string[]; unavailable: string[] }>>(new Map());
@@ -372,6 +374,7 @@ export function InstalledPage({
                   addon={addon}
                   update={updateMap.get(addon.dir_name)}
                   missingDeps={missingDepsMap.get(addon.dir_name) ?? undefined}
+                  dependents={dependentsMap.get(addon.dir_name)}
                   catalogDate={catalogDates[addon.dir_name] ?? null}
                   fileInfoUrl={fileInfoUrls[addon.dir_name] ?? null}
                   addonPath={addonPath}
